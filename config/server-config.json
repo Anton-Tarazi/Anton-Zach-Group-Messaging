@@ -1,0 +1,5 @@
+{
+    "server_db_path": "../keys/server.db",
+    "server_signing_key_path": "../keys/serv-dsa-private.key",
+    "server_verification_key_path": "../keys/serv-dsa-public.key"
+}
