@@ -116,6 +116,8 @@ SecByteBlock CryptoDriver::AES_generate_key(const SecByteBlock &DH_shared_key) {
 
 }
 
+// test comment
+
 /**
  * @brief Encrypts the given plaintext.
  */
