@@ -88,17 +88,32 @@ std::tuple<DH, SecByteBlock, SecByteBlock> CryptoDriver::DH_initialize() {
 SecByteBlock CryptoDriver::DH_generate_shared_key(
     const DH &DH_obj, const SecByteBlock &DH_private_value,
     const SecByteBlock &DH_other_public_value) {
-  // TODO: implement me!
+
+    SecByteBlock secret{DH_obj.AgreedValueLength()};
+    if (!DH_obj.Agree(secret, DH_private_value, DH_other_public_value)) {
+        throw std::runtime_error("DH failed to agree.");
+    }
+
+    return secret;
 }
 
 /**
  * @brief Generates AES key using HKDF with a salt.
  */
 SecByteBlock CryptoDriver::AES_generate_key(const SecByteBlock &DH_shared_key) {
-  std::string aes_salt_str("salt0000");
-  SecByteBlock aes_salt((const unsigned char *)(aes_salt_str.data()),
+    std::string aes_salt_str("salt0000");
+    SecByteBlock aes_salt((const unsigned char *)(aes_salt_str.data()),
                         aes_salt_str.size());
-  // TODO: implement me!
+
+    SecByteBlock key{AES::DEFAULT_KEYLENGTH};
+
+    HKDF<SHA256> hkdf;
+    hkdf.DeriveKey(key, key.size(), DH_shared_key,
+                   DH_shared_key.size(), aes_salt, aes_salt.size(),
+                   nullptr, 0);
+
+    return key;
+
 }
 
 /**
@@ -106,14 +121,28 @@ SecByteBlock CryptoDriver::AES_generate_key(const SecByteBlock &DH_shared_key) {
  */
 std::pair<std::string, SecByteBlock>
 CryptoDriver::AES_encrypt(SecByteBlock key, std::string plaintext) {
-  try {
-    // TODO: implement me!
-  } catch (CryptoPP::Exception &e) {
-    std::cerr << e.what() << std::endl;
-    std::cerr << "This function was likely called with an incorrect shared key."
-              << std::endl;
-    throw std::runtime_error("CryptoDriver AES encryption failed.");
-  }
+    try {
+
+
+        AutoSeededRandomPool ap;
+        CBC_Mode<AES>::Encryption e;
+        SecByteBlock iv{AES::BLOCKSIZE};
+        e.GetNextIV(ap, iv);
+        e.SetKeyWithIV(key, key.size(), iv, iv.size());
+
+        std::string ciphertext;
+        StringSource ss{plaintext, true,
+                        new StreamTransformationFilter{
+                                e, new StringSink{ciphertext}}};
+
+        return {ciphertext, iv};
+
+    } catch (CryptoPP::Exception &e) {
+        std::cerr << e.what() << std::endl;
+        std::cerr << "This function was likely called with an incorrect shared key."
+                << std::endl;
+        throw std::runtime_error("CryptoDriver AES encryption failed.");
+    }
 }
 
 /**
@@ -121,14 +150,25 @@ CryptoDriver::AES_encrypt(SecByteBlock key, std::string plaintext) {
  */
 std::string CryptoDriver::AES_decrypt(SecByteBlock key, SecByteBlock iv,
                                       std::string ciphertext) {
-  try {
-    // TODO: implement me!
-  } catch (CryptoPP::Exception &e) {
-    std::cerr << e.what() << std::endl;
-    std::cerr << "This function was likely called with an incorrect shared key."
-              << std::endl;
-    throw std::runtime_error("CryptoDriver AES decryption failed.");
-  }
+    try {
+
+        CBC_Mode<AES>::Decryption d;
+        d.SetKeyWithIV(key, key.size(), iv, iv.size());
+
+        std::string plaintext;
+
+        StringSource ss{ciphertext, true,
+                        new StreamTransformationFilter{
+                                d, new StringSink{plaintext}}};
+
+        return plaintext;
+
+    } catch (CryptoPP::Exception &e) {
+        std::cerr << e.what() << std::endl;
+        std::cerr << "This function was likely called with an incorrect shared key."
+                << std::endl;
+        throw std::runtime_error("CryptoDriver AES decryption failed.");
+    }
 }
 
 /**
@@ -136,10 +176,18 @@ std::string CryptoDriver::AES_decrypt(SecByteBlock key, SecByteBlock iv,
  */
 SecByteBlock
 CryptoDriver::HMAC_generate_key(const SecByteBlock &DH_shared_key) {
-  std::string hmac_salt_str("salt0001");
-  SecByteBlock hmac_salt((const unsigned char *)(hmac_salt_str.data()),
+    std::string hmac_salt_str("salt0001");
+    SecByteBlock hmac_salt((const unsigned char *)(hmac_salt_str.data()),
                          hmac_salt_str.size());
-  // TODO: implement me!
+
+    SecByteBlock key{SHA256::BLOCKSIZE};
+
+    HKDF<SHA256> hkdf;
+    hkdf.DeriveKey(key, key.size(), DH_shared_key,
+                   DH_shared_key.size(), hmac_salt, hmac_salt_str.size(),
+                   nullptr, 0);
+
+    return key;
 }
 
 /**
@@ -147,12 +195,20 @@ CryptoDriver::HMAC_generate_key(const SecByteBlock &DH_shared_key) {
  */
 std::string CryptoDriver::HMAC_generate(SecByteBlock key,
                                         std::string ciphertext) {
-  try {
-    // TODO: implement me!
-  } catch (const CryptoPP::Exception &e) {
-    std::cerr << e.what() << std::endl;
-    throw std::runtime_error("CryptoDriver HMAC generation failed.");
-  }
+    try {
+        HMAC<SHA256> hmac{key, key.size()};
+        std::string signature;
+
+        StringSource ss{ciphertext, true,
+                        new HashFilter{hmac,
+                                       new StringSink{signature}}};
+
+        return signature;
+
+    } catch (const CryptoPP::Exception &e) {
+        std::cerr << e.what() << std::endl;
+        throw std::runtime_error("CryptoDriver HMAC generation failed.");
+    }
 }
 
 /**
@@ -160,9 +216,20 @@ std::string CryptoDriver::HMAC_generate(SecByteBlock key,
  */
 bool CryptoDriver::HMAC_verify(SecByteBlock key, std::string ciphertext,
                                std::string mac) {
-  const int flags = HashVerificationFilter::THROW_EXCEPTION |
-                    HashVerificationFilter::HASH_AT_END;
-  // TODO: implement me!
+    const int flags = HashVerificationFilter::THROW_EXCEPTION |
+                        HashVerificationFilter::HASH_AT_END;
+
+    try {
+        HMAC<SHA256> hmac{key, key.size()};
+
+        StringSource ss{ciphertext + mac, true,
+                        new HashVerificationFilter{hmac, nullptr, flags}};
+        return true;
+
+    } catch (const CryptoPP::Exception &e) {
+        std::cerr << e.what() << std::endl;
+        return false;
+    }
 }
 
 /**
@@ -174,7 +241,18 @@ bool CryptoDriver::HMAC_verify(SecByteBlock key, std::string ciphertext,
  * @return tuple of DSA private key and public key
  */
 std::pair<DSA::PrivateKey, DSA::PublicKey> CryptoDriver::DSA_generate_keys() {
-  // TODO: implement me!
+
+    AutoSeededRandomPool ap;
+    DSA::PrivateKey privateKey;
+    privateKey.GenerateRandomWithKeySize(ap, DSA_KEYSIZE);
+
+    DSA::PublicKey publicKey;
+    publicKey.AssignFrom(privateKey);
+    if (!privateKey.Validate(ap, 3) || !publicKey.Validate(ap, 3)) {
+        throw std::runtime_error("DSA key generation failed");
+    }
+
+    return {privateKey, publicKey};
 }
 
 /**
@@ -188,7 +266,19 @@ std::pair<DSA::PrivateKey, DSA::PublicKey> CryptoDriver::DSA_generate_keys() {
  */
 std::string CryptoDriver::DSA_sign(const DSA::PrivateKey &signing_key,
                                    std::vector<unsigned char> message) {
-  // TODO: implement me!
+
+    AutoSeededRandomPool ap;
+
+    DSA::Signer signer{signing_key};
+
+    std::string msgString = chvec2str(message);
+    std::string signature;
+
+    StringSource ss{msgString, true, new SignerFilter{
+        ap, signer, new StringSink{signature}
+    }};
+
+    return signature;
 }
 
 /**
@@ -203,9 +293,22 @@ std::string CryptoDriver::DSA_sign(const DSA::PrivateKey &signing_key,
 bool CryptoDriver::DSA_verify(const DSA::PublicKey &verification_key,
                               std::vector<unsigned char> message,
                               std::string signature) {
-  const int flags = SignatureVerificationFilter::PUT_RESULT |
-                    SignatureVerificationFilter::SIGNATURE_AT_END;
-  // TODO: implement me!
+    const int flags = SignatureVerificationFilter::PUT_RESULT |
+                        SignatureVerificationFilter::SIGNATURE_AT_END;
+
+    byte result = false;
+    DSA::Verifier verifier{verification_key};
+
+    std::string msgString = chvec2str(message);
+
+    StringSource ss{msgString + signature, true, new SignatureVerificationFilter{
+        verifier, new ArraySink{
+            &result, sizeof(result)
+        }, flags
+    }};
+
+    return (bool) result;
+
 }
 
 /**
