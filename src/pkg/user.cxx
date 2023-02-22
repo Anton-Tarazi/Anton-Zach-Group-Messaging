@@ -83,7 +83,42 @@ void UserClient::run() {
  */
 std::pair<CryptoPP::SecByteBlock, CryptoPP::SecByteBlock>
 UserClient::HandleServerKeyExchange() {
-  // TODO: implement me!
+
+    auto [dh, privateKey, publicKey] =
+            this->crypto_driver->DH_initialize();
+
+    // send public key
+    UserToServer_DHPublicValue_Message publicKeyMsg;
+    publicKeyMsg.public_value = publicKey;
+    std::vector<unsigned char> msg;
+    publicKeyMsg.serialize(msg);
+    this->network_driver->send(msg);
+
+    // receive signed g^a, g^b from server
+    std::vector<unsigned char> response = this->network_driver->read();
+    ServerToUser_DHPublicValue_Message serverResponse;
+    serverResponse.deserialize(response);
+
+    // verify response
+    bool valid = this->crypto_driver->DSA_verify(
+            this->DSA_server_verification_key,
+            concat_byteblocks(serverResponse.server_public_value, serverResponse.user_public_value),
+            serverResponse.server_signature
+            );
+
+    if (!valid)
+        throw std::runtime_error("failed to verify server response");
+
+    // compute keys
+    SecByteBlock sharedKey = this->crypto_driver->DH_generate_shared_key(
+            dh, privateKey, serverResponse.server_public_value
+            );
+
+    SecByteBlock AESKey = this->crypto_driver->AES_generate_key(sharedKey);
+    SecByteBlock HMACKey = this->crypto_driver->HMAC_generate_key(sharedKey);
+
+    return {AESKey, HMACKey};
+
 }
 
 /**
@@ -98,7 +133,56 @@ UserClient::HandleServerKeyExchange() {
  */
 std::pair<CryptoPP::SecByteBlock, CryptoPP::SecByteBlock>
 UserClient::HandleUserKeyExchange() {
-  // TODO: implement me!
+
+    auto [dh, privateKey, publicKey] =
+            this->crypto_driver->DH_initialize();
+
+    // send public key
+    std::vector<unsigned char> publicKeyAndCert =
+            concat_byteblock_and_cert(publicKey, this->certificate);
+    std::string signature =
+            this->crypto_driver->DSA_sign(this->DSA_signing_key, publicKeyAndCert);
+    UserToUser_DHPublicValue_Message userMsg;
+    userMsg.public_value = publicKey;
+    userMsg.certificate = this->certificate;
+    userMsg.user_signature = signature;
+
+    std::vector<unsigned char> msg;
+    userMsg.serialize(msg);
+    this->network_driver->send(msg);
+
+    // receive signed g^b from other user
+    std::vector<unsigned char> response = this->network_driver->read();
+    UserToUser_DHPublicValue_Message userResponse;
+    userResponse.deserialize(response);
+
+    // verify response
+    bool valid1 = this->crypto_driver->DSA_verify(
+            userResponse.certificate.verification_key,
+            concat_byteblock_and_cert(userResponse.public_value, userResponse.certificate),
+            userResponse.user_signature
+    );
+
+    bool valid2 = this->crypto_driver->DSA_verify(
+            this->DSA_server_verification_key,
+            concat_string_and_dsakey(userResponse.certificate.id, userResponse.certificate.verification_key),
+            userResponse.certificate.server_signature
+    );
+
+    if (!valid1 || !valid2)
+        throw std::runtime_error("failed to verify user response");
+
+    this->DSA_remote_verification_key = userResponse.certificate.verification_key;
+
+    // compute keys
+    SecByteBlock sharedKey = this->crypto_driver->DH_generate_shared_key(
+            dh, privateKey, userResponse.public_value
+    );
+
+    SecByteBlock AESKey = this->crypto_driver->AES_generate_key(sharedKey);
+    SecByteBlock HMACKey = this->crypto_driver->HMAC_generate_key(sharedKey);
+
+    return {AESKey, HMACKey};
 }
 
 /**
@@ -131,7 +215,89 @@ void UserClient::HandleLoginOrRegister(std::string input) {
  * this->DSA_verification_key
  */
 void UserClient::DoLoginOrRegister(std::string input) {
-  // TODO: implement me!
+
+    std::vector<unsigned char> encryptedMessage, encryptedResponse, decryptedResponse;
+    bool valid;
+
+    auto [AESKey, HMACKey] = this->HandleServerKeyExchange();
+
+    // send ID and intent
+    UserToServer_IDPrompt_Message userIDMsg;
+    userIDMsg.id = this->id;
+    userIDMsg.new_user = input == "register";
+    encryptedMessage =
+            this->crypto_driver->encrypt_and_tag(AESKey, HMACKey, &userIDMsg);
+    this->network_driver->send(encryptedMessage);
+
+    // receive salt
+    ServerToUser_Salt_Message serverSaltMsg;
+    encryptedResponse = this->network_driver->read();
+    std::tie(decryptedResponse, valid) =
+            this->crypto_driver->decrypt_and_verify(AESKey, HMACKey, encryptedResponse);
+    if (!valid)
+        throw std::runtime_error{"Received invalid server response"};
+    serverSaltMsg.deserialize(decryptedResponse);
+
+    // get password
+    this->cli_driver->print_info("Enter password:");
+    std::string password;
+    std::cin >> password;
+
+    // send salted password
+    UserToServer_HashedAndSaltedPassword_Message hashedPasswordMsg;
+    hashedPasswordMsg.hspw = this->crypto_driver->hash(password + serverSaltMsg.salt);
+    encryptedMessage =
+            this->crypto_driver->encrypt_and_tag(AESKey, HMACKey, &hashedPasswordMsg);
+    this->network_driver->send(encryptedMessage);
+
+    // get seed if registering
+    if (input == "register") {
+        ServerToUser_PRGSeed_Message serverPRGSeedMsg;
+        encryptedResponse = this->network_driver->read();
+        std::tie(decryptedResponse, valid) =
+                this->crypto_driver->decrypt_and_verify(AESKey, HMACKey, encryptedResponse);
+        if (!valid)
+            throw std::runtime_error("Received invalid server response");
+
+        serverPRGSeedMsg.deserialize(decryptedResponse);
+        this->prg_seed = serverPRGSeedMsg.seed;
+    }
+
+    // calculate and send PRG value
+    UserToServer_PRGValue_Message userPRGValueMsg;
+    SecByteBlock r = this->crypto_driver->prg(
+            this->prg_seed,
+            integer_to_byteblock(this->crypto_driver->nowish()),
+            PRG_SIZE
+            );
+    userPRGValueMsg.value = r;
+    encryptedMessage =
+            this->crypto_driver->encrypt_and_tag(AESKey, HMACKey, &userPRGValueMsg);
+    this->network_driver->send(encryptedMessage);
+
+
+    // generate and store DSA keys
+    std::tie(this->DSA_signing_key, this->DSA_verification_key) =
+            this->crypto_driver->DSA_generate_keys();
+
+    UserToServer_VerificationKey_Message userVerificationKeyMsg;
+    userVerificationKeyMsg.verification_key = this->DSA_verification_key;
+    encryptedMessage =
+            this->crypto_driver->encrypt_and_tag(AESKey, HMACKey, &userVerificationKeyMsg);
+    this->network_driver->send(encryptedMessage);
+
+    // receive and store server certificate
+    ServerToUser_IssuedCertificate_Message serverCertMsg;
+    encryptedResponse = this->network_driver->read();
+    std::tie(decryptedResponse, valid) =
+            this->crypto_driver->decrypt_and_verify(AESKey, HMACKey, encryptedResponse);
+    if (!valid)
+        throw std::runtime_error("Invalid server response");
+
+    serverCertMsg.deserialize(decryptedResponse);
+    this->certificate = serverCertMsg.certificate;
+
+
 }
 
 /**
