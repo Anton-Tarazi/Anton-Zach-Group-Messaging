@@ -285,6 +285,7 @@ void ServerClient::HandleLogin(
         throw std::runtime_error("server received invalid message");
     userVerificationKey.deserialize(decryptedResponse);
 
+    ServerToUser_IssuedCertificate_Message serverCertificateMsg;
     Certificate_Message userCertificate;
     userCertificate.id = id;
     userCertificate.verification_key = userVerificationKey.verification_key;
@@ -295,7 +296,8 @@ void ServerClient::HandleLogin(
                             id,
                             userVerificationKey.verification_key
                             ));
-    encryptedMessage = crypto_driver->encrypt_and_tag(AESKey, HMACKey, &userCertificate);
+    serverCertificateMsg.certificate = userCertificate;
+    encryptedMessage = crypto_driver->encrypt_and_tag(AESKey, HMACKey, &serverCertificateMsg);
     network_driver->send(encryptedMessage);
 
 }
@@ -392,6 +394,7 @@ void ServerClient::HandleRegister(
         throw std::runtime_error("server received invalid message");
     userVerificationKey.deserialize(decryptedResponse);
 
+    ServerToUser_IssuedCertificate_Message serverCertificateMsg;
     Certificate_Message userCertificate;
     userCertificate.id = id;
     userCertificate.verification_key = userVerificationKey.verification_key;
@@ -402,7 +405,8 @@ void ServerClient::HandleRegister(
                             id,
                             userVerificationKey.verification_key
                     ));
-    encryptedMessage = crypto_driver->encrypt_and_tag(AESKey, HMACKey, &userCertificate);
+    serverCertificateMsg.certificate = userCertificate;
+    encryptedMessage = crypto_driver->encrypt_and_tag(AESKey, HMACKey, &serverCertificateMsg);
     network_driver->send(encryptedMessage);
 
     user.user_id = id;
