@@ -239,7 +239,7 @@ void ServerClient::HandleLogin(
     // find pepper
     bool foundPepper = false;
     for (int i = 0; i < (1 << 8); i++) {
-        std::string pepper = std::bitset<8>(i).to_string();
+        std::string pepper(PEPPER_SIZE, (char) i);
         if (crypto_driver->hash(userHashSalt.hspw + pepper) == user.password_hash) {
             foundPepper = true;
             break;

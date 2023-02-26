@@ -275,8 +275,13 @@ void UserClient::DoLoginOrRegister(std::string input) {
     this->network_driver->send(encryptedMessage);
 
     // generate and store DSA keys
-    std::tie(this->DSA_signing_key, this->DSA_verification_key) =
-            this->crypto_driver->DSA_generate_keys();
+    if (input == "register") {
+        std::tie(this->DSA_signing_key, this->DSA_verification_key) =
+                this->crypto_driver->DSA_generate_keys();
+        SaveDSAPrivateKey(this->user_config.user_signing_key_path, this->DSA_signing_key);
+        SaveDSAPublicKey(this->user_config.user_verification_key_path, this->DSA_verification_key);
+    }
+
 
     // send verification key
     UserToServer_VerificationKey_Message userVerificationKeyMsg;
