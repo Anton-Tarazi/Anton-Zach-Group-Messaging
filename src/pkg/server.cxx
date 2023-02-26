@@ -118,13 +118,37 @@ void ServerClient::ListenForConnections(int port) {
 bool ServerClient::HandleConnection(
     std::shared_ptr<NetworkDriver> network_driver,
     std::shared_ptr<CryptoDriver> crypto_driver) {
-  try {
-    // TODO: implement me!
-  } catch (...) {
-    this->cli_driver->print_warning("Connection threw an error");
-    network_driver->disconnect();
-    return false;
-  }
+    try {
+
+        std::vector<unsigned char> encryptedResponse, decryptedResponse;
+        bool valid;
+
+        auto [AESKey, HMACKey] =
+                this->HandleKeyExchange(network_driver, crypto_driver);
+
+        UserToServer_IDPrompt_Message userIdMsg;
+        encryptedResponse = network_driver->read();
+        std::tie(decryptedResponse, valid) =
+                crypto_driver->decrypt_and_verify(AESKey, HMACKey, encryptedResponse);
+        if (!valid)
+            throw std::runtime_error("Received invalid user response");
+        userIdMsg.deserialize(decryptedResponse);
+
+
+        if (userIdMsg.new_user) {
+            this->HandleRegister(network_driver, crypto_driver, userIdMsg.id, {AESKey, HMACKey});
+        } else {
+            this->HandleLogin(network_driver, crypto_driver, userIdMsg.id, {AESKey, HMACKey});
+        }
+
+        network_driver->disconnect();
+        return false;
+
+    } catch (...) {
+        this->cli_driver->print_warning("Connection threw an error");
+        network_driver->disconnect();
+        return false;
+    }
 }
 
 /**
@@ -137,7 +161,39 @@ bool ServerClient::HandleConnection(
 std::pair<CryptoPP::SecByteBlock, CryptoPP::SecByteBlock>
 ServerClient::HandleKeyExchange(std::shared_ptr<NetworkDriver> network_driver,
                                 std::shared_ptr<CryptoDriver> crypto_driver) {
-  // TODO: implement me!
+
+    auto [dh, privateKey, publicKey] =
+            crypto_driver->DH_initialize();
+
+    // receive user public value
+    std::vector<unsigned char> userPublicKeyMsg = network_driver->read();
+    UserToServer_DHPublicValue_Message userPublicKey;
+    userPublicKey.deserialize(userPublicKeyMsg);
+
+    // sign user public value + server public value
+    std::vector<unsigned char> concatPublicKeys =
+            concat_byteblocks(publicKey, userPublicKey.public_value);
+    std::string serverPublicKeySignature = crypto_driver->DSA_sign(this->DSA_signing_key, concatPublicKeys);
+
+    // send public value + signature back to user
+    ServerToUser_DHPublicValue_Message serverPublicValue;
+    serverPublicValue.server_public_value = publicKey;
+    serverPublicValue.user_public_value = userPublicKey.public_value;
+    serverPublicValue.server_signature = serverPublicKeySignature;
+    std::vector<unsigned char> serverPublicValueMsg;
+    serverPublicValue.serialize(serverPublicValueMsg);
+    network_driver->send(serverPublicValueMsg);
+
+    // generate shared keys
+    SecByteBlock sharedKey = crypto_driver->DH_generate_shared_key(
+            dh, privateKey, userPublicKey.public_value
+            );
+
+    SecByteBlock AESKey = crypto_driver->AES_generate_key(sharedKey);
+    SecByteBlock HMACKey = crypto_driver->HMAC_generate_key(sharedKey);
+
+    return {AESKey, HMACKey};
+
 }
 
 /**
@@ -154,7 +210,94 @@ void ServerClient::HandleLogin(
     std::shared_ptr<NetworkDriver> network_driver,
     std::shared_ptr<CryptoDriver> crypto_driver, std::string id,
     std::pair<CryptoPP::SecByteBlock, CryptoPP::SecByteBlock> keys) {
-  // TODO: implement me!
+
+    std::vector<unsigned char> encryptedMessage, encryptedResponse, decryptedResponse;
+    bool valid;
+
+    auto [AESKey, HMACKey] = keys;
+
+    UserRow user = this->db_driver->find_user(id);
+    if (user.user_id.empty())
+        throw std::runtime_error("user never registered");
+
+    // send salt
+    ServerToUser_Salt_Message saltMsg;
+    saltMsg.salt = user.password_salt;
+    encryptedMessage = crypto_driver->encrypt_and_tag(AESKey, HMACKey, &saltMsg);
+    network_driver->send(encryptedMessage);
+
+    // receive hashed and salted password
+    UserToServer_HashedAndSaltedPassword_Message userHashSalt;
+    encryptedResponse = network_driver->read();
+    std::tie(decryptedResponse, valid) =
+            crypto_driver->decrypt_and_verify(AESKey, HMACKey, encryptedResponse);
+    if (!valid)
+        throw std::runtime_error("server received invalid message");
+
+    userHashSalt.deserialize(decryptedResponse);
+
+    // find pepper
+    bool foundPepper = false;
+    for (int i = 0; i < (1 << 8); i++) {
+        std::string pepper = std::bitset<8>(i).to_string();
+        if (crypto_driver->hash(userHashSalt.hspw + pepper) == user.password_hash) {
+            foundPepper = true;
+            break;
+        }
+    }
+
+    if (!foundPepper)
+        throw std::runtime_error("failed to authenticate user");
+
+    // get prng value
+    UserToServer_PRGValue_Message userPRGValue;
+    encryptedResponse = network_driver->read();
+    std::tie(decryptedResponse, valid) =
+            crypto_driver->decrypt_and_verify(AESKey, HMACKey, encryptedResponse);
+    if (!valid)
+        throw std::runtime_error("server received invalid message");
+    userPRGValue.deserialize(decryptedResponse);
+
+    // validate prg
+    bool prgMatch = false;
+    Integer now = crypto_driver->nowish();
+    for (int i = 0; i <= 60; i++) {
+        SecByteBlock r = crypto_driver->prg(
+                string_to_byteblock(user.prg_seed),
+                integer_to_byteblock(now - i),
+                PRG_SIZE
+                );
+        if (r == userPRGValue.value) {
+            prgMatch = true;
+            break;
+        }
+    }
+
+    if (!prgMatch)
+        throw std::runtime_error("server failed to validate prg");
+
+    // receive user verification key
+    UserToServer_VerificationKey_Message userVerificationKey;
+    encryptedResponse = network_driver->read();
+    std::tie(decryptedResponse, valid) =
+            crypto_driver->decrypt_and_verify(AESKey, HMACKey, encryptedResponse);
+    if (!valid)
+        throw std::runtime_error("server received invalid message");
+    userVerificationKey.deserialize(decryptedResponse);
+
+    Certificate_Message userCertificate;
+    userCertificate.id = id;
+    userCertificate.verification_key = userVerificationKey.verification_key;
+    userCertificate.server_signature =
+            crypto_driver->DSA_sign(
+                    this->DSA_signing_key,
+                    concat_string_and_dsakey(
+                            id,
+                            userVerificationKey.verification_key
+                            ));
+    encryptedMessage = crypto_driver->encrypt_and_tag(AESKey, HMACKey, &userCertificate);
+    network_driver->send(encryptedMessage);
+
 }
 
 /**
@@ -173,5 +316,100 @@ void ServerClient::HandleRegister(
     std::shared_ptr<NetworkDriver> network_driver,
     std::shared_ptr<CryptoDriver> crypto_driver, std::string id,
     std::pair<CryptoPP::SecByteBlock, CryptoPP::SecByteBlock> keys) {
-  // TODO: implement me!
+
+    std::vector<unsigned char> encryptedMessage, encryptedResponse, decryptedResponse;
+    bool valid;
+
+    auto [AESKey, HMACKey] = keys;
+
+    UserRow user = this->db_driver->find_user(id);
+    if (!user.user_id.empty())
+        throw std::runtime_error("user already registered");
+
+    // generate and send salt
+    std::string salt = byteblock_to_string(crypto_driver->png(SALT_SIZE));
+    ServerToUser_Salt_Message saltMsg;
+    saltMsg.salt = salt;
+    encryptedMessage = crypto_driver->encrypt_and_tag(AESKey, HMACKey, &saltMsg);
+    network_driver->send(encryptedMessage);
+
+    // receive hashed and salted password
+    UserToServer_HashedAndSaltedPassword_Message userHashSalt;
+    encryptedResponse = network_driver->read();
+    std::tie(decryptedResponse, valid) =
+            crypto_driver->decrypt_and_verify(AESKey, HMACKey, encryptedResponse);
+    if (!valid)
+        throw std::runtime_error("server received invalid message");
+    userHashSalt.deserialize(decryptedResponse);
+
+    // generate pepper, hash, and prg seed
+    std::string pepper =
+            byteblock_to_string(crypto_driver->png(PEPPER_SIZE));
+    std::string saltedAndPepperedHashedPassword =
+            crypto_driver->hash(userHashSalt.hspw + pepper);
+    SecByteBlock prgSeed =crypto_driver->png(PRG_SIZE);
+
+    // send seed
+    ServerToUser_PRGSeed_Message prgSeedMsg;
+    prgSeedMsg.seed = prgSeed;
+    encryptedMessage = crypto_driver->encrypt_and_tag(AESKey, HMACKey, &prgSeedMsg);
+    network_driver->send(encryptedMessage);
+
+
+    // get prng value
+    UserToServer_PRGValue_Message userPRGValue;
+    encryptedResponse = network_driver->read();
+    std::tie(decryptedResponse, valid) =
+            crypto_driver->decrypt_and_verify(AESKey, HMACKey, encryptedResponse);
+    if (!valid)
+        throw std::runtime_error("server received invalid message");
+    userPRGValue.deserialize(decryptedResponse);
+
+    // validate prg
+    bool prgMatch = false;
+    Integer now = crypto_driver->nowish();
+    for (int i = 0; i <= 60; i++) {
+        SecByteBlock r = crypto_driver->prg(
+                prgSeed,
+                integer_to_byteblock(now - i),
+                PRG_SIZE
+        );
+        if (r == userPRGValue.value) {
+            prgMatch = true;
+            break;
+        }
+    }
+
+    if (!prgMatch)
+        throw std::runtime_error("server failed to validate prg");
+
+    // receive user verification key
+    UserToServer_VerificationKey_Message userVerificationKey;
+    encryptedResponse = network_driver->read();
+    std::tie(decryptedResponse, valid) =
+            crypto_driver->decrypt_and_verify(AESKey, HMACKey, encryptedResponse);
+    if (!valid)
+        throw std::runtime_error("server received invalid message");
+    userVerificationKey.deserialize(decryptedResponse);
+
+    Certificate_Message userCertificate;
+    userCertificate.id = id;
+    userCertificate.verification_key = userVerificationKey.verification_key;
+    userCertificate.server_signature =
+            crypto_driver->DSA_sign(
+                    this->DSA_signing_key,
+                    concat_string_and_dsakey(
+                            id,
+                            userVerificationKey.verification_key
+                    ));
+    encryptedMessage = crypto_driver->encrypt_and_tag(AESKey, HMACKey, &userCertificate);
+    network_driver->send(encryptedMessage);
+
+    user.user_id = id;
+    user.password_hash = saltedAndPepperedHashedPassword;
+    user.password_salt = salt;
+    user.prg_seed = byteblock_to_string(prgSeed);
+
+    this->db_driver->insert_user(user);
+
 }
