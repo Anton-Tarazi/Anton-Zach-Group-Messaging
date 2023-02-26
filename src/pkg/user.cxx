@@ -223,7 +223,7 @@ void UserClient::DoLoginOrRegister(std::string input) {
 
     // send ID and intent
     UserToServer_IDPrompt_Message userIDMsg;
-    userIDMsg.id = this->id;
+    userIDMsg.id = this->user_config.user_username;
     userIDMsg.new_user = input == "register";
     encryptedMessage =
             this->crypto_driver->encrypt_and_tag(AESKey, HMACKey, &userIDMsg);
@@ -239,9 +239,7 @@ void UserClient::DoLoginOrRegister(std::string input) {
     serverSaltMsg.deserialize(decryptedResponse);
 
     // get password
-    this->cli_driver->print_info("Enter password:");
-    std::string password;
-    std::cin >> password;
+    std::string password = this->user_config.user_password;
 
     // send salted password
     UserToServer_HashedAndSaltedPassword_Message hashedPasswordMsg;
@@ -261,6 +259,7 @@ void UserClient::DoLoginOrRegister(std::string input) {
 
         serverPRGSeedMsg.deserialize(decryptedResponse);
         this->prg_seed = serverPRGSeedMsg.seed;
+        SavePRGSeed(this->user_config.user_prg_seed_path, this->prg_seed);
     }
 
     // calculate and send PRG value
@@ -275,11 +274,11 @@ void UserClient::DoLoginOrRegister(std::string input) {
             this->crypto_driver->encrypt_and_tag(AESKey, HMACKey, &userPRGValueMsg);
     this->network_driver->send(encryptedMessage);
 
-
     // generate and store DSA keys
     std::tie(this->DSA_signing_key, this->DSA_verification_key) =
             this->crypto_driver->DSA_generate_keys();
 
+    // send verification key
     UserToServer_VerificationKey_Message userVerificationKeyMsg;
     userVerificationKeyMsg.verification_key = this->DSA_verification_key;
     encryptedMessage =
@@ -296,7 +295,7 @@ void UserClient::DoLoginOrRegister(std::string input) {
 
     serverCertMsg.deserialize(decryptedResponse);
     this->certificate = serverCertMsg.certificate;
-
+    SaveCertificate(this->user_config.user_certificate_path, this->certificate);
 
 }
 
