@@ -394,6 +394,7 @@ void ServerClient::HandleRegister(
         throw std::runtime_error("server received invalid message");
     userVerificationKey.deserialize(decryptedResponse);
 
+    // construct and send user certificate
     ServerToUser_IssuedCertificate_Message serverCertificateMsg;
     Certificate_Message userCertificate;
     userCertificate.id = id;
@@ -409,6 +410,7 @@ void ServerClient::HandleRegister(
     encryptedMessage = crypto_driver->encrypt_and_tag(AESKey, HMACKey, &serverCertificateMsg);
     network_driver->send(encryptedMessage);
 
+    // save user in database
     user.user_id = id;
     user.password_hash = saltedAndPepperedHashedPassword;
     user.password_salt = salt;
