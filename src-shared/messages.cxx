@@ -429,6 +429,89 @@ int ServerToUser_IssuedCertificate_Message::deserialize(
   return n;
 }
 
+void UserToServer_Wrapper_Message::serialize(
+        std::vector<unsigned char> &data) {
+    // Add message type
+    data.push_back((char)MessageType::UserToServer_Wrapper_Message);
+
+    // Add fields.
+    put_string(this->sender_id,data);
+    put_string(this->receiver_id, data);
+
+    data.insert(data.end(), this->message.begin(), this->message.end());
+}
+
+int UserToServer_Wrapper_Message::deserialize(
+        std::vector<unsigned char> &data) {
+    // Check correct message type.
+    assert(data[0] == MessageType::UserToServer_Wrapper_Message);
+
+    // Get fields.
+    int n = 1;
+    n += get_string(&this->sender_id, data, n);
+    n += get_string(&this->receiver_id, data, n);
+    this->message = std::vector<unsigned char>(data.begin() + n, data.end());
+    n += data.begin()+n - data.end();
+    return n;
+}
+
+void ServerToUser_Wrapper_Message::serialize(
+        std::vector<unsigned char> &data) {
+    data.push_back((char)MessageType::ServerToUser_Wrapper_Message);
+
+    put_string(this->sender_id, data);
+    put_string(this->receiver_id, data);
+
+    data.insert(data.end(), this->message.begin(), this->message.end());
+}
+
+int ServerToUser_Wrapper_Message::deserialize(
+        std::vector<unsigned char> &data) {
+    assert(data[0] == MessageType::ServerToUser_Wrapper_Message);
+
+    // Get fields.
+    int n = 1;
+    n += get_string(&this->sender_id, data, n);
+    n += get_string(&this->receiver_id, data, n);
+    this->message = std::vector<unsigned char>(data.begin() + n, data.end());
+    n += (data.begin()+n - data.end()) * sizeof(unsigned char);
+    return n;
+}
+
+void UserToServer_GID_Message::serialize(
+        std::vector<unsigned char> &data) {
+    data.push_back((char)MessageType::UserToServer_GID_Message);
+
+    put_string(this->sender_id, data);
+}
+
+int UserToServer_GID_Message::deserialize(
+        std::vector<unsigned char> &data) {
+    assert(data[0] == MessageType::UserToServer_GID_Message);
+
+    int n = 1;
+    n += get_string(&this->sender_id, data, n);
+    return n;
+}
+
+void ServerToUser_GID_Message::serialize(
+        std::vector<unsigned char> &data) {
+    data.push_back((char)MessageType::ServerToUser_GID_Message);
+
+    data.push_back((char) this->group_id);
+}
+
+int ServerToUser_GID_Message::deserialize(
+        std::vector<unsigned char> &data) {
+    assert(data[0] == MessageType::ServerToUser_GID_Message);
+    assert(data[1]);
+    this->group_id = data[1];
+    assert(this->group_id > 0);
+    return 2;
+}
+
+
+
 // ================================================
 // USER <=> USER MESSAGES
 // ================================================
@@ -496,6 +579,86 @@ int UserToUser_Message_Message::deserialize(std::vector<unsigned char> &data) {
   int n = 1;
   n += get_string(&this->msg, data, n);
   return n;
+}
+
+void UserToUser_Add_Message::serialize(
+        std::vector<unsigned char> &data) {
+    data.push_back((char)MessageType::UserToUser_Add_Message);
+    data.push_back((char)this->group_id);
+    put_string(this->member_id, data);
+}
+
+int UserToUser_Add_Message::deserialize(
+        std::vector<unsigned char> &data) {
+    assert(data[0] == MessageType::UserToUser_Add_Message);
+    assert(data[1]);
+    this->group_id = data[1];
+    assert(this->group_id > 0);
+    int n = 2;
+    n += get_string(&this->member_id, data, n);
+    return n;
+}
+
+void UserToUser_Response_Message::serialize(
+        std::vector<unsigned char> &data) {
+    data.push_back((char)MessageType::UserToUser_Response_Message);
+    data.push_back((char)this->group_id);
+    data.push_back((char) join);
+}
+
+int UserToUser_Response_Message::deserialize(
+        std::vector<unsigned char> &data) {
+    assert(data[0] == MessageType::UserToUser_Response_Message);
+    assert(data[1]);
+    assert(data[2]);
+    this->group_id = data[1];
+    this->join = data[2];
+    return 3;
+}
+
+void UserToUser_Leave_Message::serialize(std::vector<unsigned char> &data) {
+    data.push_back((char) MessageType::UserToUser_Leave_Message);
+    data.push_back((char) this->group_id);
+    put_string(this->member_id, data);
+}
+
+int UserToUser_Leave_Message::deserialize(std::vector<unsigned char> &data) {
+    assert(data[0] == MessageType::UserToUser_Leave_Message);
+    assert(data[1]);
+    this->group_id = data[1];
+    int n = 2;
+    n += get_string(&this->member_id, data, n);
+    return n;
+}
+
+void UserToUser_Kick_Message::serialize(std::vector<unsigned char> &data) {
+    data.push_back((char) MessageType::UserToUser_Kick_Message);
+    data.push_back((char) this->group_id);
+    put_string(this->member_id, data);
+}
+
+int UserToUser_Kick_Message::deserialize(std::vector<unsigned char> &data) {
+    assert(data[0] == MessageType::UserToUser_Kick_Message);
+    assert(data[1]);
+    this->group_id = data[1];
+    int n = 2;
+    n += get_string(&this->member_id, data, n);
+    return n;
+}
+
+void UserToUser_Text_Message::serialize(std::vector<unsigned char> &data) {
+    data.push_back((char) MessageType::UserToUser_Text_Message);
+    data.push_back((char) this->group_id);
+    put_string(this->text, data);
+}
+
+int UserToUser_Text_Message::deserialize(std::vector<unsigned char> &data) {
+    assert(data[0] == MessageType::UserToUser_Text_Message);
+    assert(data[1]);
+    this->group_id = data[1];
+    int n = 2;
+    n += get_string(&this->text, data, n);
+    return n;
 }
 
 // ================================================

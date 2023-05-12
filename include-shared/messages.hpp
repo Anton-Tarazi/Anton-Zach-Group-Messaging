@@ -32,12 +32,21 @@ enum T {
   UserToServer_VerificationKey_Message = 9,
   ServerToUser_IssuedCertificate_Message = 10,
   UserToUser_DHPublicValue_Message = 11,
-  UserToUser_Message_Message = 12,
+  UserToServer_Wrapper_Message = 12,
+  ServerToUser_Wrapper_Message = 13,
+  UserToServer_GID_Message = 14,
+  ServerToUser_GID_Message = 15,
+  UserToUser_Add_Message = 16,
+  UserToUser_Response_Message = 17,
+  UserToUser_Leave_Message = 18,
+  UserToUser_Kick_Message = 19,
+  UserToUser_Text_Message = 20,
+  UserToUser_Message_Message = 21, // deprecated for final project
 };
 };
 MessageType::T get_message_type(std::vector<unsigned char> &data);
 
-// ================================================
+// ===============================================
 // SERIALIZABLE
 // ================================================
 
@@ -149,6 +158,38 @@ struct ServerToUser_IssuedCertificate_Message : public Serializable {
   int deserialize(std::vector<unsigned char> &data);
 };
 
+struct UserToServer_Wrapper_Message : public Serializable {
+    std::string sender_id;
+    std::string receiver_id;
+    std::vector<unsigned char> message;
+
+    void serialize(std::vector<unsigned char> &data);
+    int deserialize(std::vector<unsigned char> &data);
+};
+
+struct ServerToUser_Wrapper_Message : public Serializable {
+    std::string sender_id;
+    std::string receiver_id;
+    std::vector<unsigned char> message;
+
+    void serialize(std::vector<unsigned char> &data);
+    int deserialize(std::vector<unsigned char> &data);
+};
+
+struct UserToServer_GID_Message : public Serializable {
+    std::string sender_id;
+
+    void serialize(std::vector<unsigned char> &data);
+    int deserialize(std::vector<unsigned char> &data);
+};
+
+struct ServerToUser_GID_Message :  public Serializable {
+    int group_id = -1;
+
+    void serialize(std::vector<unsigned char> &data);
+    int deserialize(std::vector<unsigned char> &data);
+};
+
 // ================================================
 // USER <=> USER MESSAGES
 // ================================================
@@ -167,6 +208,49 @@ struct UserToUser_Message_Message : public Serializable {
 
   void serialize(std::vector<unsigned char> &data);
   int deserialize(std::vector<unsigned char> &data);
+};
+
+
+
+struct UserToUser_Add_Message : public Serializable {
+    int group_id;
+    std::string member_id;
+
+    void serialize(std::vector<unsigned char> &data);
+    int deserialize(std::vector<unsigned char> &data);
+};
+
+struct UserToUser_Response_Message : public Serializable {
+    int group_id;
+    bool join;
+    // TODO : SHOULD WE ADD MORE FIELDS?
+
+    void serialize(std::vector<unsigned char> &data);
+    int deserialize(std::vector<unsigned char> &data);
+};
+
+struct UserToUser_Leave_Message : public Serializable {
+    int group_id;
+    std::string member_id;
+
+    void serialize(std::vector<unsigned char> &data);
+    int deserialize(std::vector<unsigned char> &data);
+};
+
+struct UserToUser_Kick_Message : public Serializable {
+    int group_id;
+    std::string member_id;
+
+    void serialize(std::vector<unsigned char> &data);
+    int deserialize(std::vector<unsigned char> &data);
+};
+
+struct UserToUser_Text_Message: public Serializable {
+    int group_id;
+    std::string text;
+
+    void serialize(std::vector<unsigned char> &data);
+    int deserialize(std::vector<unsigned char> &data);
 };
 
 // ================================================
