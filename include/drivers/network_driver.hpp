@@ -7,6 +7,9 @@
 
 #include "../../include-shared/messages.hpp"
 
+using namespace boost::asio;
+using ip::tcp;
+
 class NetworkDriver {
 public:
   virtual void listen(int port) = 0;

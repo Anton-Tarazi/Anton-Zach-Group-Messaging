@@ -417,5 +417,4 @@ void ServerClient::HandleRegister(
     user.prg_seed = byteblock_to_string(prgSeed);
 
     this->db_driver->insert_user(user);
-
 }
