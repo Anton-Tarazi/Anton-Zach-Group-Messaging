@@ -276,5 +276,5 @@ std::vector<unsigned char>
 concat_string_and_dsakey(std::string &s, CryptoPP::DSA::PublicKey &k);
 std::vector<unsigned char> concat_byteblocks(CryptoPP::SecByteBlock &b1,
                                              CryptoPP::SecByteBlock &b2);
-std::vector<unsigned char> concat_byteblock_and_cert(CryptoPP::SecByteBlock &b,
+std::vector<unsigned char> concat_byteblock_and_cert(CryptoPP::SecByteBlock &b, std::string group,
                                                      Certificate_Message &cert);

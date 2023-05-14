@@ -46,6 +46,8 @@ private:
   // group messaging structs
   // map from group chat -> user -> aes, hmac keys
   std::map<std::string, std::map<std::string, std::pair<CryptoPP::SecByteBlock, CryptoPP::SecByteBlock>>> group_keys;
+  std::map<std::string, std::pair<CryptoPP::SecByteBlock, CryptoPP::SecByteBlock>> ownKeys;
+
   std::mutex mtx;
 
   std::mutex network_mut; // for network driver
@@ -61,7 +63,7 @@ private:
     void AddMember(std::pair<CryptoPP::SecByteBlock, CryptoPP::SecByteBlock> keys,
                    std::string group, std::string member);
     void SendMessage(std::pair<CryptoPP::SecByteBlock, CryptoPP::SecByteBlock> keys,
-                     std::string group_id, std::string message);
+                     std::string group, std::string message);
 
     // functions to be called by receive thread
 

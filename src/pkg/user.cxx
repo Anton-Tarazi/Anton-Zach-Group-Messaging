@@ -57,6 +57,8 @@ UserClient::UserClient(std::shared_ptr<NetworkDriver> network_driver,
     this->cli_driver->print_warning("Error loading keys, you may consider "
                                     "registering or logging in again!");
   }
+
+    this->id = this->user_config.user_username;
 }
 
 /**
@@ -122,7 +124,7 @@ UserClient::HandleServerKeyExchange() {
 /**
  * Diffie-Hellman key exchange with another user. This function shuold:
  * 1) Generate a keypair, a, g^a, signs it, and sends it to the other user.
- *    Use concat_byteblock_and_cert to sign the message.
+ *    Use concate_pk_gid_and_cert to sign the message.
  * 2) Receive a public value from the other user and verifies its signature and
  * certificate.
  * 3) Generate a DH shared key and generate AES and HMAC keys.
@@ -137,7 +139,7 @@ UserClient::HandleUserKeyExchange() {
 
     // send public key
     std::vector<unsigned char> publicKeyAndCert =
-            concat_byteblock_and_cert(publicKey, this->certificate);
+            concat_byteblock_and_cert(publicKey, group, this->certificate);
     std::string signature =
             this->crypto_driver->DSA_sign(this->DSA_signing_key, publicKeyAndCert);
     UserToUser_DHPublicValue_Message userMsg;
@@ -226,7 +228,7 @@ void UserClient::DoLoginOrRegister(std::string input) {
 
     // send ID and intent
     UserToServer_IDPrompt_Message userIDMsg;
-    userIDMsg.id = this->user_config.user_username;
+    userIDMsg.id = this->id;
     userIDMsg.new_user = input == "register";
     encryptedMessage =
             this->crypto_driver->encrypt_and_tag(AESKey, HMACKey, &userIDMsg);
@@ -467,23 +469,86 @@ void UserClient::SendThread(
 
 void UserClient::CreateGroupChat(std::pair<CryptoPP::SecByteBlock, CryptoPP::SecByteBlock> keys) {
 
+    std::unique_lock<std::mutex> l(this->network_mut);
 
-
-
+    UserToServer_GID_Message msg;
+    auto enc =
+            this->crypto_driver->encrypt_and_tag(keys.first, keys.second, &msg);
+    this->network_driver->send(enc);
 }
 
 void UserClient::AddMember(std::pair<CryptoPP::SecByteBlock, CryptoPP::SecByteBlock> keys,
                            std::string group, std::string member) {
 
+    std::unique_lock<std::mutex> l(this->network_mut);
+    std::unique_lock<std::mutex> lk(this->mtx);
 
+    if (!this->group_keys.count(group)) {
+        this->cli_driver->print_warning("group does not exist");
+        return;
+    }
+
+    UserToServer_Wrapper_Message userMsg;
+    userMsg.type = MessageType::UserToUser_Invite_Message;
+    userMsg.sender_id = this->id;
+    userMsg.receiver_id = member;
+
+    UserToUser_Invite_Message invite;
+    invite.public_value = this->ownKeys[group].second;
+    invite.certificate = this->certificate;
+    invite.group_id = group;
+
+    std::vector<unsigned char> publicKeyAndCert =
+            concat_byteblock_and_cert(invite.public_value, group, this->certificate);
+    invite.user_signature =
+            this->crypto_driver->DSA_sign(this->DSA_signing_key, publicKeyAndCert);
+
+
+    auto encrypted_invite = this->crypto_driver->encrypt_and_tag(
+                                                this->group_keys[group][member].first,
+                                                this->group_keys[group][member].second,
+                                                                 &invite);
+    userMsg.message = encrypted_invite;
+
+    auto encrypted_server_msg = this->crypto_driver->encrypt_and_tag(
+            keys.first, keys.second, &userMsg
+            );
+    this->network_driver->send(encrypted_server_msg);
 
 }
 
 
 void UserClient::SendMessage(std::pair<CryptoPP::SecByteBlock, CryptoPP::SecByteBlock> keys,
-                             std::string group_id, std::string message) {
+                             std::string group, std::string message) {
 
+    std::unique_lock<std::mutex> l(this->network_mut);
+    std::unique_lock<std::mutex> lk(this->mtx);
 
+    if (!this->group_keys.count(group)) {
+        this->cli_driver->print_warning("group does not exist");
+        return;
+    }
 
+    UserToUser_Message_Message message_message;
+    message_message.msg = message;
+    message_message.group_id = group;
+
+    // send separate message to each member of group
+    for (auto &group_member: this->group_keys[group]) {
+        auto encrypted_message = this->crypto_driver->encrypt_and_tag(
+                group_member.second.first, group_member.second.second, &message_message
+                );
+
+        UserToServer_Wrapper_Message wrapper;
+        wrapper.type = MessageType::UserToUser_Message_Message;
+        wrapper.sender_id = this->id;
+        wrapper.receiver_id = group_member.first;
+        wrapper.message = encrypted_message;
+
+        auto encrypt_to_server = this->crypto_driver->encrypt_and_tag(
+                keys.first, keys.second, &wrapper
+                );
+        this->network_driver->send(encrypt_to_server);
+    }
 
 }

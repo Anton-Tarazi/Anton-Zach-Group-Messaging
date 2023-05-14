@@ -745,7 +745,7 @@ std::vector<unsigned char> concat_byteblocks(CryptoPP::SecByteBlock &b1,
  * Concatenate a byteblock and certificate into vector of unsigned char
  */
 std::vector<unsigned char>
-concat_byteblock_and_cert(CryptoPP::SecByteBlock &b,
+concat_byteblock_and_cert(CryptoPP::SecByteBlock &b, std::string group,
                           Certificate_Message &cert) {
   // Convert byteblock to strings, serialize cert
   std::string b_str = byteblock_to_string(b);
@@ -757,5 +757,7 @@ concat_byteblock_and_cert(CryptoPP::SecByteBlock &b,
   std::vector<unsigned char> v;
   v.insert(v.end(), b_str.begin(), b_str.end());
   v.insert(v.end(), cert_data.begin(), cert_data.end());
+  v.insert(v.end(), group.begin(), group.end());
   return v;
 }
+
