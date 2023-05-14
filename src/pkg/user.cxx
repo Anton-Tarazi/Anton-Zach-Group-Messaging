@@ -139,7 +139,7 @@ UserClient::HandleUserKeyExchange() {
 
     // send public key
     std::vector<unsigned char> publicKeyAndCert =
-            concat_byteblock_and_cert(publicKey, group, this->certificate);
+            concat_byteblock_and_cert(publicKey, this->certificate);
     std::string signature =
             this->crypto_driver->DSA_sign(this->DSA_signing_key, publicKeyAndCert);
     UserToUser_DHPublicValue_Message userMsg;
@@ -499,7 +499,7 @@ void UserClient::AddMember(std::pair<CryptoPP::SecByteBlock, CryptoPP::SecByteBl
     invite.group_id = group;
 
     std::vector<unsigned char> publicKeyAndCert =
-            concat_byteblock_and_cert(invite.public_value, group, this->certificate);
+            concat_byteblock_group_and_cert(invite.public_value, group, this->certificate);
     invite.user_signature =
             this->crypto_driver->DSA_sign(this->DSA_signing_key, publicKeyAndCert);
 
