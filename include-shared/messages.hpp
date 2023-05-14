@@ -214,10 +214,9 @@ struct UserToUser_DHPublicValue_Message : public Serializable {
 
 struct UserToUser_Invite_Message : public Serializable {
     // UserToUser_DHPublicValue_Message + group id
-
     CryptoPP::SecByteBlock public_value;
     Certificate_Message certificate;
-    std::string gid;
+    std::string group_id;
     std::string user_signature; // computed on public_value + gid + certificate
 
     void serialize(std::vector<unsigned char> &data);
@@ -232,7 +231,7 @@ struct UserToUser_Invite_Response_Message : public Serializable {
 
     CryptoPP::SecByteBlock public_value;
     Certificate_Message certificate;
-    std::string gid;
+    std::string group_id;
     std::string user_signature; // computed on public_value + gid + certificate
 
     void serialize(std::vector<unsigned char> &data);
@@ -251,6 +250,7 @@ struct UserToUser_New_Member_Info_Message : public Serializable {
 
 
 struct UserToUser_Old_Members_Info_Message : public Serializable {
+    std::string num_members;
     std::vector<CryptoPP::SecByteBlock> other_public_values;
     std::vector<Certificate_Message> other_certificates;
 
@@ -261,54 +261,12 @@ struct UserToUser_Old_Members_Info_Message : public Serializable {
 
 struct UserToUser_Message_Message : public Serializable {
   std::string msg;
-  std::string gid;
+  std::string group_id;
 
   void serialize(std::vector<unsigned char> &data);
   int deserialize(std::vector<unsigned char> &data);
 };
 
-
-
-struct UserToUser_Add_Message : public Serializable {
-    int group_id;
-    std::string member_id;
-
-    void serialize(std::vector<unsigned char> &data);
-    int deserialize(std::vector<unsigned char> &data);
-};
-
-struct UserToUser_Response_Message : public Serializable {
-    int group_id;
-    bool join;
-    // TODO : SHOULD WE ADD MORE FIELDS?
-
-    void serialize(std::vector<unsigned char> &data);
-    int deserialize(std::vector<unsigned char> &data);
-};
-
-struct UserToUser_Leave_Message : public Serializable {
-    int group_id;
-    std::string member_id;
-
-    void serialize(std::vector<unsigned char> &data);
-    int deserialize(std::vector<unsigned char> &data);
-};
-
-struct UserToUser_Kick_Message : public Serializable {
-    int group_id;
-    std::string member_id;
-
-    void serialize(std::vector<unsigned char> &data);
-    int deserialize(std::vector<unsigned char> &data);
-};
-
-struct UserToUser_Text_Message: public Serializable {
-    int group_id;
-    std::string text;
-
-    void serialize(std::vector<unsigned char> &data);
-    int deserialize(std::vector<unsigned char> &data);
-};
 
 // ================================================
 // SIGNING HELPERS
