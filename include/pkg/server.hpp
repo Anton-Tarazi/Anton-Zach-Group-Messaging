@@ -34,6 +34,14 @@ public:
       std::shared_ptr<NetworkDriver> network_driver,
       std::shared_ptr<CryptoDriver> crypto_driver, std::string id,
       std::pair<CryptoPP::SecByteBlock, CryptoPP::SecByteBlock> keys);
+  void MessageReceiver(
+          std::shared_ptr<NetworkDriver> network_driver,
+          std::shared_ptr<CryptoDriver> crypto_driver, std::string id,
+          std::pair<SecByteBlock, SecByteBlock> keys);
+  void MessageSender(
+          std::shared_ptr<NetworkDriver> network_driver,
+          std::shared_ptr<CryptoDriver> crypto_driver, std::string id,
+          std::pair<SecByteBlock, SecByteBlock> keys);
 
 private:
   ServerConfig server_config;
@@ -43,7 +51,18 @@ private:
   CryptoPP::DSA::PrivateKey DSA_signing_key;
   CryptoPP::DSA::PublicKey DSA_verification_key;
 
+  // mutex on the table
+  std::mutex table_mutex;
+  std::condition_variable table_cv;
+
+  std::atomic_int gid_counter;
+
+  // mapping of user_id ==> pair (lock, message queue);
+  std::map<std::string, std::deque<std::vector<unsigned char>>> forwarding_table;
+
   void ListenForConnections(int port);
   void Reset(std::string _);
   void Users(std::string _);
+
+  bool shutdown;
 };

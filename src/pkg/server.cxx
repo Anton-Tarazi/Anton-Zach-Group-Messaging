@@ -49,6 +49,8 @@ ServerClient::ServerClient(ServerConfig server_config) {
     SaveDSAPublicKey(server_config.server_verification_key_path,
                      this->DSA_verification_key);
   }
+  this->shutdown = false;
+  this->gid_counter = 0;
 }
 
 /**
@@ -140,8 +142,16 @@ bool ServerClient::HandleConnection(
         } else {
             this->HandleLogin(network_driver, crypto_driver, userIdMsg.id, {AESKey, HMACKey});
         }
+        std::thread rt(&ServerClient::MessageReceiver, this,
+                      network_driver, crypto_driver, userIdMsg.id, std::make_pair(AESKey, HMACKey));
 
-        network_driver->disconnect();
+        std::thread st(&ServerClient::MessageSender, this,
+                      network_driver, crypto_driver, userIdMsg.id, std::make_pair(AESKey, HMACKey));
+        // acquire lock of forwarding table. this automatically unlocks once it goes out of scope
+        // user is now logged in and we've created the table entry necessary for them to receive messages
+        // now we need to create the threads responsible for them to accept messages
+        rt.detach();
+        st.detach();
         return false;
 
     } catch (...) {
@@ -300,6 +310,10 @@ void ServerClient::HandleLogin(
     encryptedMessage = crypto_driver->encrypt_and_tag(AESKey, HMACKey, &serverCertificateMsg);
     network_driver->send(encryptedMessage);
 
+    std::lock_guard<std::mutex> table_guard(this->table_mutex);
+    // create new message queue for new user
+    std::deque<std::vector<unsigned char>> queue;
+    this->forwarding_table[id] = queue;
 }
 
 /**
@@ -417,5 +431,79 @@ void ServerClient::HandleRegister(
     user.prg_seed = byteblock_to_string(prgSeed);
 
     this->db_driver->insert_user(user);
+    std::lock_guard<std::mutex> table_guard(this->table_mutex);
+    // create new message queue for new user
+    std::deque<std::vector<unsigned char>> queue;
+    this->forwarding_table[id] = queue;
+}
 
+void ServerClient::MessageReceiver(
+        std::shared_ptr<NetworkDriver> network_driver,
+        std::shared_ptr<CryptoDriver> crypto_driver, std::string id,
+        std::pair<CryptoPP::SecByteBlock, CryptoPP::SecByteBlock> keys) {
+    auto [aes_key, hmac_key] = keys;
+    while (!this->shutdown) {
+        auto [payload, ok] = crypto_driver->decrypt_and_verify(
+                aes_key,
+                hmac_key,
+                network_driver->read());
+        if (!ok) {
+            throw std::runtime_error("server.cxx:439 error decrypting user message");
+        }
+        UserToServer_Wrapper_Message utswm;
+        ServerToUser_Wrapper_Message stuwm;
+        ServerToUser_GID_Message stugid;
+        int gid;
+        std::unique_lock<std::mutex> lock(this->table_mutex);
+        std::vector<unsigned char> data;
+
+        switch (payload[0]) {
+            case (char) MessageType::UserToServer_Wrapper_Message:
+                utswm.deserialize(payload);
+                stuwm.sender_id = utswm.sender_id;
+                stuwm.receiver_id = utswm.receiver_id;
+                stuwm.message = utswm.message;
+                stuwm.serialize(data);
+                lock.lock();
+                this->forwarding_table[stuwm.receiver_id].push_back(data);
+                this->table_cv.notify_all();
+                lock.unlock();
+                break;
+            case (char) MessageType::UserToServer_GID_Message:
+                gid = this->gid_counter.fetch_add(1);
+                stugid.group_id = gid;
+                network_driver->send(crypto_driver->encrypt_and_tag(aes_key, hmac_key, &stugid));
+                break;
+            default:
+                cli_driver->print_warning("received unconfigured message type");
+                break;
+        }
+        payload.clear();
+    }
+}
+
+
+// this function should wait until it is awoken, check if the queue it is responsible for is empty,
+void ServerClient::MessageSender(std::shared_ptr<NetworkDriver> network_driver,
+                                 std::shared_ptr<CryptoDriver> crypto_driver, std::string id,
+                                 std::pair<CryptoPP::SecByteBlock, CryptoPP::SecByteBlock> keys) {
+    auto [aes_key, hmac_key] = keys;
+    std::unique_lock<std::mutex> lock(this->table_mutex);
+    ServerToUser_Wrapper_Message stuwm;
+
+    // wait until message queue is not empty
+    while (!this->shutdown) {
+        while (this->forwarding_table[id].empty()) {
+            this->table_cv.wait(lock);
+        }
+        // acquired lock. need to now empty the queue and send messages
+
+        while (!this->forwarding_table[id].empty()) {
+            std::vector<unsigned char> msg = this->forwarding_table[id].front();
+            stuwm.deserialize(msg);
+            this->forwarding_table[id].pop_front();
+            network_driver->send(crypto_driver->encrypt_and_tag(aes_key, hmac_key, &stuwm));
+        }
+        lock.unlock();
+    }
 }
