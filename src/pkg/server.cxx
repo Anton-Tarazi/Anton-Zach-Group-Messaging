@@ -462,6 +462,7 @@ void ServerClient::MessageReceiver(
                 utswm.deserialize(payload);
                 stuwm.sender_id = utswm.sender_id;
                 stuwm.receiver_id = utswm.receiver_id;
+                stuwm.type = utswm.type;
                 stuwm.message = utswm.message;
                 stuwm.serialize(data);
                 lock.lock();
@@ -471,7 +472,7 @@ void ServerClient::MessageReceiver(
                 break;
             case (char) MessageType::UserToServer_GID_Message:
                 gid = this->gid_counter.fetch_add(1);
-                stugid.group_id = gid;
+                stugid.group_id = std::to_string(gid);
                 network_driver->send(crypto_driver->encrypt_and_tag(aes_key, hmac_key, &stugid));
                 break;
             default:

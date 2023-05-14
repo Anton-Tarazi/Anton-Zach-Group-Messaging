@@ -437,6 +437,7 @@ void UserToServer_Wrapper_Message::serialize(
     // Add fields.
     put_string(this->sender_id,data);
     put_string(this->receiver_id, data);
+    data.push_back((char)this->type);
 
     data.insert(data.end(), this->message.begin(), this->message.end());
 }
@@ -450,8 +451,10 @@ int UserToServer_Wrapper_Message::deserialize(
     int n = 1;
     n += get_string(&this->sender_id, data, n);
     n += get_string(&this->receiver_id, data, n);
+    this->type = static_cast<MessageType::T>(data[n]);
+    n++;
     this->message = std::vector<unsigned char>(data.begin() + n, data.end());
-    n += data.begin()+n - data.end();
+    n = data.size();
     return n;
 }
 
@@ -461,6 +464,7 @@ void ServerToUser_Wrapper_Message::serialize(
 
     put_string(this->sender_id, data);
     put_string(this->receiver_id, data);
+    data.push_back((char) this->type);
 
     data.insert(data.end(), this->message.begin(), this->message.end());
 }
@@ -473,8 +477,10 @@ int ServerToUser_Wrapper_Message::deserialize(
     int n = 1;
     n += get_string(&this->sender_id, data, n);
     n += get_string(&this->receiver_id, data, n);
+    this->type = static_cast<MessageType::T>(data[n]);
+    n++;
     this->message = std::vector<unsigned char>(data.begin() + n, data.end());
-    n += (data.begin()+n - data.end()) * sizeof(unsigned char);
+    n = data.size();
     return n;
 }
 
