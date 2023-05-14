@@ -5,6 +5,7 @@
 #include <string>
 #include <sys/ioctl.h>
 #include <vector>
+#include <numeric>
 
 #include <boost/asio.hpp>
 #include <boost/lexical_cast.hpp>
@@ -115,17 +116,6 @@ UserClient::HandleServerKeyExchange() {
     SecByteBlock HMACKey = this->crypto_driver->HMAC_generate_key(sharedKey);
 
     return {AESKey, HMACKey};
-
-}
-
-
-bool UserClient::CreateGroupChat(std::string name) {
-
-    UserToServer_GID_Message newGroup;
-
-
-
-
 
 }
 
@@ -367,8 +357,8 @@ void UserClient::ReceiveThread(
     switch(type) {
 
           case MessageType::UserToUser_Invite_Message:
-            // TODO- validate and respond with UserToUser_Invite_Response_Message
-            break;
+                // TODO- validate and respond with UserToUser_Invite_Response_Message
+                break;
           case MessageType::UserToUser_Invite_Response_Message:
               // TODO- respond with UserToUser_Old_Members_Info_Message
               // and send UserToUser_New_Member_Info_Message to rest of group
@@ -408,40 +398,46 @@ void UserClient::SendThread(
             this->cli_driver->print_info("commands: \n create <group name>"
                                          "\n add <group name> <user id> \n"
                                          "send <group name> <message>"
-
-                                         "\n leave <group name>");
+                                         "\n info");
         } else if (commands[0] == "create") {
             if (commands.size() != 2) {
                 this->cli_driver->print_info("usage: create <group name>");
             } else {
-                // TODO: create group
-                // send a UserToServer_GID_MESSAGE
+                this->CreateGroupChat(keys);
             }
         } else if (commands[0] == "add") {
             if (commands.size() != 3) {
                 this->cli_driver->print_info("usage: add <group name> <user id>");
             } else {
-                // TODO: add to group
-                // send UserToUser_Invite_Message and let receiver thread handle the rest
-                // including sending
+                this->AddMember(keys, commands[1], commands[2]);
             }
         } else if (commands[0] == "send") {
             if (commands.size() != 3) {
                 this->cli_driver->print_info("usage: send <group name> <message>");
             } else {
-                // TODO: send a UserToUser_Message_Message
+
+                std::string message = std::accumulate(commands.begin() + 2, commands.end(), std::string(""));
+                this->SendMessage(keys, commands[0], message);
             }
-        } else if (commands[0] == "leave") {
-            if (commands.size() != 2) {
-                this->cli_driver->print_info("usage: leave <group name>");
-            } else {
-                // TODO: leave - maybe don't implement this
+        } else if (commands[0] == "info") {
+            if (commands.size() != 1) {
+                this->cli_driver->print_info("usage: info");
+            } else { // print all group chats we're part of
+                std::scoped_lock<std::mutex> l(this->mtx);
+
+                for (auto &group_chat: this->group_keys) {
+                    this->cli_driver->print_info("name: " + group_chat.first + ":");
+                    for (auto &member: group_chat.second) {
+                        this->cli_driver->print_info(member.first);
+                    }
+                    this->cli_driver->print_info(""); // blank line
+                }
             }
         } else {
             this->cli_driver->print_info("invalid command \n commands: \n create <group name>"
                                          "\n add <group name> <user id> \n"
                                          "send <group name> <message>"
-                                         "\n leave <group name>");
+                                         "\n info");
         }
 
 
@@ -466,4 +462,28 @@ void UserClient::SendThread(
   }
   this->cli_driver->print_info("Received EOF from user; closing connection");
   this->network_driver->disconnect();
+}
+
+
+void UserClient::CreateGroupChat(std::pair<CryptoPP::SecByteBlock, CryptoPP::SecByteBlock> keys) {
+
+
+
+
+}
+
+void UserClient::AddMember(std::pair<CryptoPP::SecByteBlock, CryptoPP::SecByteBlock> keys,
+                           std::string group, std::string member) {
+
+
+
+}
+
+
+void UserClient::SendMessage(std::pair<CryptoPP::SecByteBlock, CryptoPP::SecByteBlock> keys,
+                             std::string group_id, std::string message) {
+
+
+
+
 }

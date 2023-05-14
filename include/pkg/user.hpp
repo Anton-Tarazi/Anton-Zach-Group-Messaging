@@ -56,5 +56,13 @@ private:
   void
   SendThread(std::pair<CryptoPP::SecByteBlock, CryptoPP::SecByteBlock> keys);
 
-    bool CreateGroupChat(std::string name);
+    // functions to be called by send thread
+    void CreateGroupChat(std::pair<CryptoPP::SecByteBlock, CryptoPP::SecByteBlock> keys);
+    void AddMember(std::pair<CryptoPP::SecByteBlock, CryptoPP::SecByteBlock> keys,
+                   std::string group, std::string member);
+    void SendMessage(std::pair<CryptoPP::SecByteBlock, CryptoPP::SecByteBlock> keys,
+                     std::string group_id, std::string message);
+
+    // functions to be called by receive thread
+
 };
