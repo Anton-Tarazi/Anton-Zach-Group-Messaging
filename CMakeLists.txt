@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.10)
 
 # project details
-project(AuthApp VERSION 1.0)
+project(GroupMessage VERSION 1.0)
 set(USER_EXEC_NAME auth_user)
 set(SERVER_EXEC_NAME auth_server)
 set(LIBRARY_NAME auth_app_lib)
