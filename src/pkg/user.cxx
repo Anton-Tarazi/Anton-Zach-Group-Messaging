@@ -67,9 +67,6 @@ void UserClient::run() {
                   &UserClient::HandleLoginOrRegister);
   repl.add_action("register", "register <address> <port>",
                   &UserClient::HandleLoginOrRegister);
-  repl.add_action("listen", "listen <port>", &UserClient::HandleUser);
-  repl.add_action("connect", "connect <address> <port>",
-                  &UserClient::HandleUser);
   repl.run();
 }
 
@@ -118,6 +115,17 @@ UserClient::HandleServerKeyExchange() {
     SecByteBlock HMACKey = this->crypto_driver->HMAC_generate_key(sharedKey);
 
     return {AESKey, HMACKey};
+
+}
+
+
+bool UserClient::CreateGroupChat(std::string name) {
+
+    UserToServer_GID_Message newGroup;
+
+
+
+
 
 }
 
@@ -199,6 +207,11 @@ void UserClient::HandleLoginOrRegister(std::string input) {
   int port = std::stoi(input_split[2]);
   this->network_driver->connect(address, port);
   this->DoLoginOrRegister(input_split[0]);
+
+
+
+
+
 }
 
 /**
@@ -282,7 +295,6 @@ void UserClient::DoLoginOrRegister(std::string input) {
         SaveDSAPublicKey(this->user_config.user_verification_key_path, this->DSA_verification_key);
     }
 
-
     // send verification key
     UserToServer_VerificationKey_Message userVerificationKeyMsg;
     userVerificationKeyMsg.verification_key = this->DSA_verification_key;
@@ -302,43 +314,10 @@ void UserClient::DoLoginOrRegister(std::string input) {
     this->certificate = serverCertMsg.certificate;
     SaveCertificate(this->user_config.user_certificate_path, this->certificate);
 
-}
+    auto keys = std::make_pair(AESKey, HMACKey);
 
-/**
- * Handles communicating with another user. This function
- * 1) Prompts the CLI to see if we're registering or logging in.
- * 2) Handles key exchange with the other user.
- */
-void UserClient::HandleUser(std::string input) {
-  // Handle if connecting or listening; parse user input.
-  std::vector<std::string> args = string_split(input, ' ');
-  bool isListener = args[0] == "listen";
-  if (isListener) {
-    if (args.size() != 2) {
-      this->cli_driver->print_warning("Invalid args, usage: listen <port>");
-      return;
-    }
-    int port = std::stoi(args[1]);
-    this->network_driver->listen(port);
-  } else {
-    if (args.size() != 3) {
-      this->cli_driver->print_warning(
-          "Invalid args, usage: connect <ip> <port>");
-      return;
-    }
-    std::string ip = args[1];
-    int port = std::stoi(args[2]);
-    this->network_driver->connect(ip, port);
-  }
+    // At this point we have a secure connection to server
 
-  // Exchange keys.
-  auto keys = this->HandleUserKeyExchange();
-
-  // Clear the screen
-  this->cli_driver->init();
-  this->cli_driver->print_success("Connected!");
-
-  // Set up communication
   boost::thread msgListener =
       boost::thread(boost::bind(&UserClient::ReceiveThread, this, keys));
   this->SendThread(keys);
@@ -368,10 +347,49 @@ void UserClient::ReceiveThread(
       throw std::runtime_error("User sent message with invalid MAC.");
     }
 
-    // Decrypt and print.
-    UserToUser_Message_Message u2u_msg;
-    u2u_msg.deserialize(msg_data.first);
-    this->cli_driver->print_left(u2u_msg.msg);
+
+    if (msg_data.first[0] == (char) MessageType::ServerToUser_GID_Message) {
+        ServerToUser_GID_Message gid;
+        gid.deserialize(msg_data.first);
+        std::scoped_lock<std::mutex> l(this->mtx);
+        this->group_keys[gid.group_id]; // put an entry in map
+        continue;
+    }
+
+    assert(msg_data.first[0] == MessageType::ServerToUser_Wrapper_Message);
+
+    ServerToUser_Wrapper_Message server_msg;
+    server_msg.deserialize(msg_data.first);
+
+    auto sender = server_msg.sender_id;
+    MessageType::T type = server_msg.type;
+    auto command = server_msg.message;
+    switch(type) {
+
+          case MessageType::UserToUser_Invite_Message:
+            // TODO- validate and respond with UserToUser_Invite_Response_Message
+            break;
+          case MessageType::UserToUser_Invite_Response_Message:
+              // TODO- respond with UserToUser_Old_Members_Info_Message
+              // and send UserToUser_New_Member_Info_Message to rest of group
+              // also calculate aes and hmac shared keys with new user and
+              // update group chats struct
+              break;
+          case MessageType::UserToUser_New_Member_Info_Message:
+              // TODO calculate shared keys and update map
+              break;
+          case MessageType::UserToUser_Old_Members_Info_Message:
+              // TODO calculate shared keys and update map
+              break;
+          case MessageType::UserToUser_Message_Message:
+              // TODO process and print text
+              break;
+          default:
+              throw std::runtime_error("received unexpected message type");
+
+    }
+
+
   }
 }
 
@@ -383,7 +401,51 @@ void UserClient::SendThread(
   std::string plaintext;
   while (std::getline(std::cin, plaintext)) {
     // Read from STDIN.
-    if (plaintext != "") {
+    if (!plaintext.empty()) {
+
+        auto commands = string_split(plaintext, ' ');
+        if (commands[0] == "help") {
+            this->cli_driver->print_info("commands: \n create <group name>"
+                                         "\n add <group name> <user id> \n"
+                                         "send <group name> <message>"
+
+                                         "\n leave <group name>");
+        } else if (commands[0] == "create") {
+            if (commands.size() != 2) {
+                this->cli_driver->print_info("usage: create <group name>");
+            } else {
+                // TODO: create group
+                // send a UserToServer_GID_MESSAGE
+            }
+        } else if (commands[0] == "add") {
+            if (commands.size() != 3) {
+                this->cli_driver->print_info("usage: add <group name> <user id>");
+            } else {
+                // TODO: add to group
+                // send UserToUser_Invite_Message and let receiver thread handle the rest
+                // including sending
+            }
+        } else if (commands[0] == "send") {
+            if (commands.size() != 3) {
+                this->cli_driver->print_info("usage: send <group name> <message>");
+            } else {
+                // TODO: send a UserToUser_Message_Message
+            }
+        } else if (commands[0] == "leave") {
+            if (commands.size() != 2) {
+                this->cli_driver->print_info("usage: leave <group name>");
+            } else {
+                // TODO: leave - maybe don't implement this
+            }
+        } else {
+            this->cli_driver->print_info("invalid command \n commands: \n create <group name>"
+                                         "\n add <group name> <user id> \n"
+                                         "send <group name> <message>"
+                                         "\n leave <group name>");
+        }
+
+
+        // TODO for reference: should delete most of this
       UserToUser_Message_Message u2u_msg;
       u2u_msg.msg = plaintext;
 
@@ -391,6 +453,7 @@ void UserClient::SendThread(
           this->crypto_driver->encrypt_and_tag(keys.first, keys.second,
                                                &u2u_msg);
       try {
+          std::unique_lock l(this->mtx);
         this->network_driver->send(msg_data);
       } catch (std::runtime_error &_) {
         this->cli_driver->print_info(

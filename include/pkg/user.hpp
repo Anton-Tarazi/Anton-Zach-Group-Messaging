@@ -27,7 +27,6 @@ public:
   HandleUserKeyExchange();
   void HandleLoginOrRegister(std::string input);
   void DoLoginOrRegister(std::string input);
-  void HandleUser(std::string input);
 
 private:
   std::string id;
@@ -44,8 +43,18 @@ private:
   CryptoPP::DSA::PublicKey DSA_remote_verification_key;
   CryptoPP::SecByteBlock prg_seed;
 
+  // group messaging structs
+  // map from group chat -> user -> aes, hmac keys
+  std::map<std::string, std::map<std::string, std::pair<CryptoPP::SecByteBlock, CryptoPP::SecByteBlock>>> group_keys;
+  std::mutex mtx;
+
+  std::mutex network_mut; // for network driver
+
+
   void
   ReceiveThread(std::pair<CryptoPP::SecByteBlock, CryptoPP::SecByteBlock> keys);
   void
   SendThread(std::pair<CryptoPP::SecByteBlock, CryptoPP::SecByteBlock> keys);
+
+    bool CreateGroupChat(std::string name);
 };

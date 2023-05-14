@@ -32,16 +32,23 @@ enum T {
   UserToServer_VerificationKey_Message = 9,
   ServerToUser_IssuedCertificate_Message = 10,
   UserToUser_DHPublicValue_Message = 11,
+
   UserToServer_Wrapper_Message = 12,
   ServerToUser_Wrapper_Message = 13,
+
+  // to create a group with the server
   UserToServer_GID_Message = 14,
   ServerToUser_GID_Message = 15,
-  UserToUser_Add_Message = 16,
-  UserToUser_Response_Message = 17,
-  UserToUser_Leave_Message = 18,
-  UserToUser_Kick_Message = 19,
-  UserToUser_Text_Message = 20,
-  UserToUser_Message_Message = 21, // deprecated for final project
+
+  // All following messages will always be contained in 12 or 13
+
+  // to add a new member to the group
+  UserToUser_Invite_Message = 16, // inviter -> new member
+  UserToUser_Invite_Response_Message = 17, // new member -> inviter
+  UserToUser_New_Member_Info_Message = 18, // inviter -> all other members
+  UserToUser_Old_Members_Info_Message = 19, // inviter -> new member
+
+  UserToUser_Message_Message = 20, // user -> user
 };
 };
 MessageType::T get_message_type(std::vector<unsigned char> &data);
@@ -161,6 +168,7 @@ struct ServerToUser_IssuedCertificate_Message : public Serializable {
 struct UserToServer_Wrapper_Message : public Serializable {
     std::string sender_id;
     std::string receiver_id;
+    MessageType::T type;
     std::vector<unsigned char> message;
 
     void serialize(std::vector<unsigned char> &data);
@@ -170,6 +178,7 @@ struct UserToServer_Wrapper_Message : public Serializable {
 struct ServerToUser_Wrapper_Message : public Serializable {
     std::string sender_id;
     std::string receiver_id;
+    MessageType::T type;
     std::vector<unsigned char> message;
 
     void serialize(std::vector<unsigned char> &data);
@@ -177,14 +186,14 @@ struct ServerToUser_Wrapper_Message : public Serializable {
 };
 
 struct UserToServer_GID_Message : public Serializable {
-    std::string sender_id;
+    // literally doesn't need any fields
 
     void serialize(std::vector<unsigned char> &data);
     int deserialize(std::vector<unsigned char> &data);
 };
 
 struct ServerToUser_GID_Message :  public Serializable {
-    int group_id = -1;
+    std::string group_id;
 
     void serialize(std::vector<unsigned char> &data);
     int deserialize(std::vector<unsigned char> &data);
@@ -203,8 +212,56 @@ struct UserToUser_DHPublicValue_Message : public Serializable {
   int deserialize(std::vector<unsigned char> &data);
 };
 
+struct UserToUser_Invite_Message : public Serializable {
+    // UserToUser_DHPublicValue_Message + group id
+
+    CryptoPP::SecByteBlock public_value;
+    Certificate_Message certificate;
+    std::string gid;
+    std::string user_signature; // computed on public_value + gid + certificate
+
+    void serialize(std::vector<unsigned char> &data);
+    int deserialize(std::vector<unsigned char> &data);
+
+};
+
+/// ^ and v are the same thing,
+
+struct UserToUser_Invite_Response_Message : public Serializable {
+    // UserToUser_DHPublicValue_Message + group id
+
+    CryptoPP::SecByteBlock public_value;
+    Certificate_Message certificate;
+    std::string gid;
+    std::string user_signature; // computed on public_value + gid + certificate
+
+    void serialize(std::vector<unsigned char> &data);
+    int deserialize(std::vector<unsigned char> &data);
+
+};
+
+
+struct UserToUser_New_Member_Info_Message : public Serializable {
+    CryptoPP::SecByteBlock other_public_value;
+    Certificate_Message other_certificate;
+
+    void serialize(std::vector<unsigned char> &data);
+    int deserialize(std::vector<unsigned char> &data);
+};
+
+
+struct UserToUser_Old_Members_Info_Message : public Serializable {
+    std::vector<CryptoPP::SecByteBlock> other_public_values;
+    std::vector<Certificate_Message> other_certificates;
+
+    void serialize(std::vector<unsigned char> &data);
+    int deserialize(std::vector<unsigned char> &data);
+};
+
+
 struct UserToUser_Message_Message : public Serializable {
   std::string msg;
+  std::string gid;
 
   void serialize(std::vector<unsigned char> &data);
   int deserialize(std::vector<unsigned char> &data);
