@@ -619,10 +619,8 @@ int UserToUser_Invite_Response_Message::deserialize(std::vector<unsigned char> &
 void UserToUser_New_Member_Info_Message::serialize(std::vector<unsigned char> &data) {
     data.push_back((char) MessageType::UserToUser_New_Member_Info_Message);
     put_string(byteblock_to_string(this->other_public_value), data);
-
-    std::vector<unsigned char> certificate_data;
-    this->other_certificate.serialize(certificate_data);
-    data.insert(data.end(), certificate_data.begin(), certificate_data.end());
+    put_string(this->group_id, data);
+    put_string(this->group_member, data);
 }
 
 
@@ -632,9 +630,8 @@ int UserToUser_New_Member_Info_Message::deserialize(std::vector<unsigned char> &
     int n = 1;
     n += get_string(&value_string, data, n);
     this->other_public_value = string_to_byteblock(value_string);
-    std::vector<unsigned char> slice =
-            std::vector<unsigned char>(data.begin() + n, data.end());
-    n += this->other_certificate.deserialize(slice);
+    n += get_string(&this->group_id, data, n);
+    n += get_string(&this->group_member, data, n);
     return n;
 }
 

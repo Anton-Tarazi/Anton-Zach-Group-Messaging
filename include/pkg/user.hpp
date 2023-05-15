@@ -67,6 +67,7 @@ private:
                      std::string group, std::string message);
 
     // functions to be called by receive thread
+    void HandleNewMemberInfoMessage(std::vector<unsigned char> message, std::string sender_id);
     void HandleOldMembersInfoMessage(std::vector<unsigned char> message, std::string sender_id);
     void ReadMessage(std::vector<unsigned char> message, std::string sender_id);
     // this function returns the data payload decrypted or false in the boolean flag.
@@ -77,4 +78,5 @@ private:
 
     void GenerateGroupKeys(std::vector<CryptoPP::SecByteBlock> other_public_values,
                                        std::vector<std::string> group_members, std::string group_id);
+    std::pair<CryptoPP::SecByteBlock , CryptoPP::SecByteBlock> GenerateUserToUserKeys(CryptoPP::SecByteBlock other_public_value);
 };

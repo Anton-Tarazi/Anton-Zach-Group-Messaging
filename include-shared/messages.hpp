@@ -240,7 +240,8 @@ struct UserToUser_Invite_Response_Message : public Serializable {
 
 struct UserToUser_New_Member_Info_Message : public Serializable {
     CryptoPP::SecByteBlock other_public_value;
-    Certificate_Message other_certificate;
+    std::string group_id;
+    std::string group_member;
 
     void serialize(std::vector<unsigned char> &data);
     int deserialize(std::vector<unsigned char> &data);

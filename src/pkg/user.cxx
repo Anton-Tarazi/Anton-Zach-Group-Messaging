@@ -136,17 +136,22 @@ void UserClient::GenerateGroupKeys(std::vector<CryptoPP::SecByteBlock> other_pub
     std::map<std::string, std::pair<CryptoPP::SecByteBlock, CryptoPP::SecByteBlock>> group_map;
 
     for (int i = 0; i < group_members.size(); i++) {
-        auto [dh, privateKey, publicKey] =
-                this->crypto_driver->DH_initialize();
-        SecByteBlock sharedKey = this->crypto_driver->DH_generate_shared_key(
-                dh, privateKey, other_public_values[i]);
-        SecByteBlock AESKey = this->crypto_driver->AES_generate_key(sharedKey);
-        SecByteBlock HMACKey = this->crypto_driver->HMAC_generate_key(sharedKey);
-        group_map[group_members[i]] = {AESKey, HMACKey};
+        group_map[group_members[i]] = this->GenerateUserToUserKeys(other_public_values[i]);
     }
 
     std::unique_lock<std::mutex> group_key_lock(this->mtx);
     this->group_keys[group_id] = group_map;
+}
+
+
+std::pair<CryptoPP::SecByteBlock , CryptoPP::SecByteBlock> UserClient::GenerateUserToUserKeys(CryptoPP::SecByteBlock other_public_value) {
+    auto [dh, privateKey, publicKey] =
+            this->crypto_driver->DH_initialize();
+    SecByteBlock sharedKey = this->crypto_driver->DH_generate_shared_key(
+            dh, privateKey, other_public_value);
+    SecByteBlock AESKey = this->crypto_driver->AES_generate_key(sharedKey);
+    SecByteBlock HMACKey = this->crypto_driver->HMAC_generate_key(sharedKey);
+    return {AESKey, HMACKey};
 }
 
 /**
@@ -163,11 +168,6 @@ void UserClient::HandleLoginOrRegister(std::string input) {
   int port = std::stoi(input_split[2]);
   this->network_driver->connect(address, port);
   this->DoLoginOrRegister(input_split[0]);
-
-
-
-
-
 }
 
 /**
@@ -333,6 +333,7 @@ void UserClient::ReceiveThread(
               break;
           case MessageType::UserToUser_New_Member_Info_Message:
               // TODO calculate shared keys and update map
+              this->HandleNewMemberInfoMessage(command, sender);
               break;
           case MessageType::UserToUser_Old_Members_Info_Message:
               this->HandleOldMembersInfoMessage(command, sender);
@@ -348,11 +349,9 @@ void UserClient::ReceiveThread(
 }
 
 void UserClient::ReadMessage(std::vector<unsigned char> message, std::string sender_id) {
-    std::unique_lock<std::mutex> group_keys_guard(this->mtx);
     auto [payload, ok] = this->TrySenderGroupKeys(message, sender_id);
     if (!ok) {
         throw std::runtime_error("Received a message which we cannot decrypt");
-        return;
     }
     UserToUser_Message_Message utumm;
     utumm.deserialize(payload);
@@ -384,8 +383,8 @@ void UserClient::HandleOldMembersInfoMessage(std::vector<unsigned char> message,
     }
 
     int length = std::stoi(utuomim.num_members);
-
     assert(length == utuomim.other_public_values.size());
+
     GenerateGroupKeys(utuomim.other_public_values, utuomim.group_members, utuomim.group_id);
 }
 
@@ -410,6 +409,19 @@ std::pair<UserToUser_Old_Members_Info_Message, bool> UserClient::TryUnclaimedKey
         }
     }
     return {utuomim, false};
+}
+
+
+void UserClient::HandleNewMemberInfoMessage(std::vector<unsigned char> message, std::string sender_id) {
+    auto [payload, ok] = this->TrySenderGroupKeys(message, sender_id);
+    if (!ok) {
+        throw std::runtime_error("Received a message which we cannot decrypt");
+    }
+    UserToUser_New_Member_Info_Message utunmim;
+    utunmim.deserialize(payload);
+    std::unique_lock<std::mutex> group_keys_lock(this->mtx);
+    this->group_keys[utunmim.group_id][utunmim.group_member] = this->GenerateUserToUserKeys(utunmim.other_public_value);
+    this->cli_driver->print_info("Added new user " + utunmim.group_member + " to group " + utunmim.group_id);
 }
 
 /**
