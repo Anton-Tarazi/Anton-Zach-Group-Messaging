@@ -561,8 +561,6 @@ void UserToUser_Invite_Message::serialize(std::vector<unsigned char> &data) {
     data.push_back((char) MessageType::UserToUser_Invite_Message);
     std::string value_string = byteblock_to_string(this->public_value);
     put_string(value_string, data);
-
-    put_string(this->group_id, data);
     put_string(this->user_signature, data);
 
     std::vector<unsigned char> certificate_data;
@@ -579,7 +577,6 @@ int UserToUser_Invite_Message::deserialize(std::vector<unsigned char> &data) {
     int n = 1;
     n += get_string(&value_string, data, n);
     this->public_value = string_to_byteblock(value_string);
-    n += get_string(&this->group_id, data, n);
     n += get_string(&this->user_signature, data, n);
 
     std::vector<unsigned char> slice =
@@ -594,7 +591,6 @@ void UserToUser_Invite_Response_Message::serialize(std::vector<unsigned char> &d
     std::string value_string = byteblock_to_string(this->public_value);
     put_string(value_string, data);
 
-    put_string(this->group_id, data);
     put_string(this->user_signature, data);
 
     std::vector<unsigned char> certificate_data;
@@ -611,7 +607,6 @@ int UserToUser_Invite_Response_Message::deserialize(std::vector<unsigned char> &
     int n = 1;
     n += get_string(&value_string, data, n);
     this->public_value = string_to_byteblock(value_string);
-    n += get_string(&this->group_id, data, n);
     n += get_string(&this->user_signature, data, n);
 
     std::vector<unsigned char> slice =
@@ -648,6 +643,7 @@ void UserToUser_Old_Members_Info_Message::serialize(std::vector<unsigned char> &
     data.push_back((char) MessageType::UserToUser_Old_Members_Info_Message);
 
     put_string(this->num_members, data);
+    put_string(this->group_id, data);
 
     for(CryptoPP::SecByteBlock pv: this->other_public_values) {
         put_string(byteblock_to_string(pv), data);
@@ -666,6 +662,7 @@ int UserToUser_Old_Members_Info_Message::deserialize(std::vector<unsigned char> 
     assert(data[0] == (char) MessageType::UserToUser_Old_Members_Info_Message);
     int n = 1;
     n += get_string(&this->num_members, data, n);
+    n += get_string(&this->group_id, data, n);
     int num = std::stoi(this->num_members);
     std::string pv_string;
     for (int i = 0; i < num; ++i) {

@@ -216,7 +216,6 @@ struct UserToUser_Invite_Message : public Serializable {
     // UserToUser_DHPublicValue_Message + group id
     CryptoPP::SecByteBlock public_value;
     Certificate_Message certificate;
-    std::string group_id;
     std::string user_signature; // computed on public_value + gid + certificate
 
     void serialize(std::vector<unsigned char> &data);
@@ -231,7 +230,6 @@ struct UserToUser_Invite_Response_Message : public Serializable {
 
     CryptoPP::SecByteBlock public_value;
     Certificate_Message certificate;
-    std::string group_id;
     std::string user_signature; // computed on public_value + gid + certificate
 
     void serialize(std::vector<unsigned char> &data);
@@ -251,6 +249,7 @@ struct UserToUser_New_Member_Info_Message : public Serializable {
 
 struct UserToUser_Old_Members_Info_Message : public Serializable {
     std::string num_members;
+    std::string group_id;
     std::vector<CryptoPP::SecByteBlock> other_public_values;
     std::vector<Certificate_Message> other_certificates;
 

@@ -52,6 +52,9 @@ private:
 
   std::mutex network_mut; // for network driver
 
+  std::mutex unclaimed_mtx;
+  std::vector<std::pair<CryptoPP::SecByteBlock , CryptoPP::SecByteBlock>> unclaimed_keys;
+
 
   void
   ReceiveThread(std::pair<CryptoPP::SecByteBlock, CryptoPP::SecByteBlock> keys);
@@ -66,9 +69,11 @@ private:
                      std::string group, std::string message);
 
     // functions to be called by receive thread
-
+    void HandleOldMembersInfoMessage(std::vector<unsigned char> message, std::string sender_id);
     void ReadMessage(std::vector<unsigned char> message, std::string sender_id);
-
     // this function returns the data payload decrypted or false in the boolean flag.
-    std::pair<std::vector<unsigned char>, bool> TrySenderKeys(std::vector<unsigned char> message, std::string sender_id);
+    std::pair<std::vector<unsigned char>, bool> TrySenderGroupKeys(std::vector<unsigned char> message, std::string sender_id);
+
+    // this function tries to decrypt using the keys in unclaimed_keys
+    std::pair<std::vector<unsigned char>, bool> TryUnclaimedKeys(std::vector<unsigned char> message, std::string sender_id);
 };

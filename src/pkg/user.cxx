@@ -384,17 +384,17 @@ void UserClient::ReceiveThread(
 
 void UserClient::ReadMessage(std::vector<unsigned char> message, std::string sender_id) {
     std::unique_lock<std::mutex> group_keys_guard(this->mtx);
-    auto [payload, ok] = this->TrySenderKeys(message, sender_id);
+    auto [payload, ok] = this->TrySenderGroupKeys(message, sender_id);
     if (!ok) {
         throw std::runtime_error("Received a message which we cannot decrypt");
         return;
     }
     UserToUser_Message_Message utumm;
     utumm.deserialize(payload);
-    this->cli_driver->print_info(sender_id + " said " + utumm.msg +  " in group " + utumm.group_id);
+    this->cli_driver->print_info(sender_id + " said: " + utumm.msg +  " in group " + utumm.group_id);
 }
 
-std::pair<std::vector<unsigned char>, bool> UserClient::TrySenderKeys(std::vector<unsigned char> message, std::string sender_id) {
+std::pair<std::vector<unsigned char>, bool> UserClient::TrySenderGroupKeys(std::vector<unsigned char> message, std::string sender_id) {
     std::unique_lock<std::mutex> key_lock(this->mtx);
     for (auto iter = this->group_keys.begin(); iter != this->group_keys.end(); ++iter) {
         auto key_pair = iter->second.find(sender_id);
@@ -410,6 +410,30 @@ std::pair<std::vector<unsigned char>, bool> UserClient::TrySenderKeys(std::vecto
     }
     std::vector<unsigned char> null;
     return std::make_pair(null, false);
+}
+
+std::pair<std::vector<unsigned char>, bool> UserClient::TryUnclaimedKeys(std::vector<unsigned char> message,
+                                                                         std::string sender_id) {
+    std::unique_lock<std::mutex> key_lock(this->unclaimed_mtx);
+    for (auto iter = this->unclaimed_keys.begin(); iter != this->unclaimed_keys.end(); iter++) {
+        auto [aes_key, hmac_key] = *iter.base();
+        auto [payload, ok] = this->crypto_driver->decrypt_and_verify(
+                aes_key,
+                hmac_key,
+                message);
+        if (ok) {
+            // found a valid keypair, we want to now add it to the group_keys mapping
+            UserToUser_Old_Members_Info_Message utuomim;
+            utuomim.deserialize(payload);
+            this->unclaimed_keys.erase(iter);
+            key_lock.unlock();
+            std::unique_lock<std::mutex> group_keys_lock(this->mtx);
+            this->group_keys[utuomim.group_id][sender_id] = {aes_key, hmac_key};
+            return {payload, ok };
+        }
+    }
+    std::vector<unsigned char> empty;
+    return {empty, false};
 }
 
 /**
@@ -523,10 +547,9 @@ void UserClient::AddMember(std::pair<CryptoPP::SecByteBlock, CryptoPP::SecByteBl
     UserToUser_Invite_Message invite;
     invite.public_value = this->ownKeys[group].second;
     invite.certificate = this->certificate;
-    invite.group_id = group;
 
     std::vector<unsigned char> publicKeyAndCert =
-            concat_byteblock_group_and_cert(invite.public_value, group, this->certificate);
+            concat_byteblock_and_cert(invite.public_value, this->certificate);
     invite.user_signature =
             this->crypto_driver->DSA_sign(this->DSA_signing_key, publicKeyAndCert);
 
@@ -577,5 +600,4 @@ void UserClient::SendMessage(std::pair<CryptoPP::SecByteBlock, CryptoPP::SecByte
                 );
         this->network_driver->send(encrypt_to_server);
     }
-
 }
