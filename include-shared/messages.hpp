@@ -250,8 +250,8 @@ struct UserToUser_New_Member_Info_Message : public Serializable {
 struct UserToUser_Old_Members_Info_Message : public Serializable {
     std::string num_members;
     std::string group_id;
+    std::vector<std::string> group_members;
     std::vector<CryptoPP::SecByteBlock> other_public_values;
-    std::vector<Certificate_Message> other_certificates;
 
     void serialize(std::vector<unsigned char> &data);
     int deserialize(std::vector<unsigned char> &data);

@@ -645,15 +645,12 @@ void UserToUser_Old_Members_Info_Message::serialize(std::vector<unsigned char> &
     put_string(this->num_members, data);
     put_string(this->group_id, data);
 
-    for(CryptoPP::SecByteBlock pv: this->other_public_values) {
-        put_string(byteblock_to_string(pv), data);
+    for(std::string group_member: this->group_members) {
+        put_string(group_member, data);
     }
 
-    std::vector<unsigned char> certificate_data;
-    for(Certificate_Message cert: this->other_certificates) {
-        certificate_data.clear();
-        cert.serialize(certificate_data);
-        data.insert(data.end(), certificate_data.begin(), certificate_data.end());
+    for(CryptoPP::SecByteBlock pv: this->other_public_values) {
+        put_string(byteblock_to_string(pv), data);
     }
 }
 
@@ -664,20 +661,18 @@ int UserToUser_Old_Members_Info_Message::deserialize(std::vector<unsigned char> 
     n += get_string(&this->num_members, data, n);
     n += get_string(&this->group_id, data, n);
     int num = std::stoi(this->num_members);
-    std::string pv_string;
     for (int i = 0; i < num; ++i) {
+        std::string group_member;
+        n += get_string(&group_member, data, n);
+        this->group_members.push_back(group_member);
+        group_member.clear();
+    }
+    for (int i = 0; i < num; ++i) {
+        std::string pv_string;
         n += get_string(&pv_string, data, n);
         this->other_public_values.push_back(string_to_byteblock(pv_string));
         pv_string.clear();
     }
-
-    assert(this->other_public_values.size() == num);
-    for (int i = 0; i < num; ++i) {
-        Certificate_Message cm;
-        n += cm.deserialize(data);
-        this->other_certificates.push_back(cm);
-    }
-    assert(this->other_certificates.size() == num);
     return n;
 }
 

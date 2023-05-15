@@ -23,8 +23,6 @@ public:
   void run();
   std::pair<CryptoPP::SecByteBlock, CryptoPP::SecByteBlock>
   HandleServerKeyExchange();
-  std::pair<CryptoPP::SecByteBlock, CryptoPP::SecByteBlock>
-  HandleUserKeyExchange();
   void HandleLoginOrRegister(std::string input);
   void DoLoginOrRegister(std::string input);
 
@@ -75,5 +73,8 @@ private:
     std::pair<std::vector<unsigned char>, bool> TrySenderGroupKeys(std::vector<unsigned char> message, std::string sender_id);
 
     // this function tries to decrypt using the keys in unclaimed_keys
-    std::pair<std::vector<unsigned char>, bool> TryUnclaimedKeys(std::vector<unsigned char> message, std::string sender_id);
+    std::pair<UserToUser_Old_Members_Info_Message, bool> TryUnclaimedKeys(std::vector<unsigned char> message, std::string sender_id);
+
+    void GenerateGroupKeys(std::vector<CryptoPP::SecByteBlock> other_public_values,
+                                       std::vector<std::string> group_members, std::string group_id);
 };

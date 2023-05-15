@@ -131,58 +131,22 @@ UserClient::HandleServerKeyExchange() {
  * 4) Store the other user's verification key in DSA_remote_verification_key.
  * @return tuple of AES_key, HMAC_key
  */
-std::pair<CryptoPP::SecByteBlock, CryptoPP::SecByteBlock>
-UserClient::HandleUserKeyExchange() {
+void UserClient::GenerateGroupKeys(std::vector<CryptoPP::SecByteBlock> other_public_values,
+                                  std::vector<std::string> group_members, std::string group_id) {
+    std::map<std::string, std::pair<CryptoPP::SecByteBlock, CryptoPP::SecByteBlock>> group_map;
 
-    auto [dh, privateKey, publicKey] =
-            this->crypto_driver->DH_initialize();
+    for (int i = 0; i < group_members.size(); i++) {
+        auto [dh, privateKey, publicKey] =
+                this->crypto_driver->DH_initialize();
+        SecByteBlock sharedKey = this->crypto_driver->DH_generate_shared_key(
+                dh, privateKey, other_public_values[i]);
+        SecByteBlock AESKey = this->crypto_driver->AES_generate_key(sharedKey);
+        SecByteBlock HMACKey = this->crypto_driver->HMAC_generate_key(sharedKey);
+        group_map[group_members[i]] = {AESKey, HMACKey};
+    }
 
-    // send public key
-    std::vector<unsigned char> publicKeyAndCert =
-            concat_byteblock_and_cert(publicKey, this->certificate);
-    std::string signature =
-            this->crypto_driver->DSA_sign(this->DSA_signing_key, publicKeyAndCert);
-    UserToUser_DHPublicValue_Message userMsg;
-    userMsg.public_value = publicKey;
-    userMsg.certificate = this->certificate;
-    userMsg.user_signature = signature;
-
-    std::vector<unsigned char> msg;
-    userMsg.serialize(msg);
-    this->network_driver->send(msg);
-
-    // receive signed g^b from other user
-    std::vector<unsigned char> response = this->network_driver->read();
-    UserToUser_DHPublicValue_Message userResponse;
-    userResponse.deserialize(response);
-
-    // verify response
-    bool valid1 = this->crypto_driver->DSA_verify(
-            userResponse.certificate.verification_key,
-            concat_byteblock_and_cert(userResponse.public_value, userResponse.certificate),
-            userResponse.user_signature
-    );
-
-    bool valid2 = this->crypto_driver->DSA_verify(
-            this->DSA_server_verification_key,
-            concat_string_and_dsakey(userResponse.certificate.id, userResponse.certificate.verification_key),
-            userResponse.certificate.server_signature
-    );
-
-    if (!valid1 || !valid2)
-        throw std::runtime_error("failed to verify user response");
-
-    this->DSA_remote_verification_key = userResponse.certificate.verification_key;
-
-    // compute keys
-    SecByteBlock sharedKey = this->crypto_driver->DH_generate_shared_key(
-            dh, privateKey, userResponse.public_value
-    );
-
-    SecByteBlock AESKey = this->crypto_driver->AES_generate_key(sharedKey);
-    SecByteBlock HMACKey = this->crypto_driver->HMAC_generate_key(sharedKey);
-
-    return {AESKey, HMACKey};
+    std::unique_lock<std::mutex> group_key_lock(this->mtx);
+    this->group_keys[group_id] = group_map;
 }
 
 /**
@@ -371,6 +335,7 @@ void UserClient::ReceiveThread(
               // TODO calculate shared keys and update map
               break;
           case MessageType::UserToUser_Old_Members_Info_Message:
+              this->HandleOldMembersInfoMessage(command, sender);
               // TODO calculate shared keys and update map
               break;
           case MessageType::UserToUser_Message_Message:
@@ -412,9 +377,22 @@ std::pair<std::vector<unsigned char>, bool> UserClient::TrySenderGroupKeys(std::
     return std::make_pair(null, false);
 }
 
-std::pair<std::vector<unsigned char>, bool> UserClient::TryUnclaimedKeys(std::vector<unsigned char> message,
+void UserClient::HandleOldMembersInfoMessage(std::vector<unsigned char> message, std::string sender_id) {
+    auto [utuomim, ok] = this->TryUnclaimedKeys(message, sender_id);
+    if (!ok) {
+        throw std::runtime_error("Received a message that can't be decrypted");
+    }
+
+    int length = std::stoi(utuomim.num_members);
+
+    assert(length == utuomim.other_public_values.size());
+    GenerateGroupKeys(utuomim.other_public_values, utuomim.group_members, utuomim.group_id);
+}
+
+std::pair<UserToUser_Old_Members_Info_Message, bool> UserClient::TryUnclaimedKeys(std::vector<unsigned char> message,
                                                                          std::string sender_id) {
     std::unique_lock<std::mutex> key_lock(this->unclaimed_mtx);
+    UserToUser_Old_Members_Info_Message utuomim;
     for (auto iter = this->unclaimed_keys.begin(); iter != this->unclaimed_keys.end(); iter++) {
         auto [aes_key, hmac_key] = *iter.base();
         auto [payload, ok] = this->crypto_driver->decrypt_and_verify(
@@ -423,17 +401,15 @@ std::pair<std::vector<unsigned char>, bool> UserClient::TryUnclaimedKeys(std::ve
                 message);
         if (ok) {
             // found a valid keypair, we want to now add it to the group_keys mapping
-            UserToUser_Old_Members_Info_Message utuomim;
             utuomim.deserialize(payload);
             this->unclaimed_keys.erase(iter);
             key_lock.unlock();
             std::unique_lock<std::mutex> group_keys_lock(this->mtx);
             this->group_keys[utuomim.group_id][sender_id] = {aes_key, hmac_key};
-            return {payload, ok };
+            return {utuomim, ok };
         }
     }
-    std::vector<unsigned char> empty;
-    return {empty, false};
+    return {utuomim, false};
 }
 
 /**
