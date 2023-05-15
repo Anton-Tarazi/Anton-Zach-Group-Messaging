@@ -67,4 +67,6 @@ private:
 
     // functions to be called by receive thread
 
+    // this function returns the data payload decrypted or false in the boolean flag.
+    std::pair<std::vector<unsigned char>, bool> trySenderKeys(std::vector<unsigned char> message, std::string sender_id);
 };
