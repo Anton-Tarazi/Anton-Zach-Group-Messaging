@@ -374,7 +374,7 @@ void UserClient::ReceiveThread(
               // TODO calculate shared keys and update map
               break;
           case MessageType::UserToUser_Message_Message:
-              std::unique_lock<std::mutex> key_lock(this->mtx);
+                this->ReadMessage(command, sender);
               break;
           default:
               throw std::runtime_error("received unexpected message type");
@@ -382,12 +382,27 @@ void UserClient::ReceiveThread(
   }
 }
 
+void UserClient::ReadMessage(std::vector<unsigned char> message, std::string sender_id) {
+    std::unique_lock<std::mutex> group_keys_guard(this->mtx);
+    auto [payload, ok] = this->TrySenderKeys(message, sender_id);
+    if (!ok) {
+        throw std::runtime_error("Received a message which we cannot decrypt");
+        return;
+    }
+    UserToUser_Message_Message utumm;
+    utumm.deserialize(payload);
+    this->cli_driver->print_info(sender_id + " said " + utumm.msg +  " in group " + utumm.group_id);
+}
+
 std::pair<std::vector<unsigned char>, bool> UserClient::TrySenderKeys(std::vector<unsigned char> message, std::string sender_id) {
     std::unique_lock<std::mutex> key_lock(this->mtx);
     for (auto iter = this->group_keys.begin(); iter != this->group_keys.end(); ++iter) {
         auto key_pair = iter->second.find(sender_id);
         if (key_pair != iter->second.end()) {
-            auto [payload, ok] = this->crypto_driver->decrypt_and_verify(key_pair->second.first, key_pair->second.second, message);
+            auto [payload, ok] = this->crypto_driver->decrypt_and_verify(
+                    key_pair->second.first,
+                    key_pair->second.second,
+                    message);
             if (ok) {
                 return std::make_pair(payload, ok);
             }
