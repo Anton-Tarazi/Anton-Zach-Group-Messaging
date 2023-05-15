@@ -383,7 +383,18 @@ void UserClient::ReceiveThread(
 }
 
 std::pair<std::vector<unsigned char>, bool> UserClient::TrySenderKeys(std::vector<unsigned char> message, std::string sender_id) {
-
+    std::unique_lock<std::mutex> key_lock(this->mtx);
+    for (auto iter = this->group_keys.begin(); iter != this->group_keys.end(); ++iter) {
+        auto key_pair = iter->second.find(sender_id);
+        if (key_pair != iter->second.end()) {
+            auto [payload, ok] = this->crypto_driver->decrypt_and_verify(key_pair->second.first, key_pair->second.second, message);
+            if (ok) {
+                return std::make_pair(payload, ok);
+            }
+        }
+    }
+    std::vector<unsigned char> null;
+    return std::make_pair(null, false);
 }
 
 /**
