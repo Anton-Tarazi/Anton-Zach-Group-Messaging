@@ -374,15 +374,16 @@ void UserClient::ReceiveThread(
               // TODO calculate shared keys and update map
               break;
           case MessageType::UserToUser_Message_Message:
-              // TODO process and print text
+              std::unique_lock<std::mutex> key_lock(this->mtx);
               break;
           default:
               throw std::runtime_error("received unexpected message type");
-
     }
-
-
   }
+}
+
+std::pair<std::vector<unsigned char>, bool> UserClient::TrySenderKeys(std::vector<unsigned char> message, std::string sender_id) {
+
 }
 
 /**
@@ -425,15 +426,15 @@ void UserClient::SendThread(
             if (commands.size() != 1) {
                 this->cli_driver->print_info("usage: info");
             } else { // print all group chats we're part of
-                std::scoped_lock<std::mutex> l(this->mtx);
+//                std::scoped_lock<std::mutex> l(this->mtx);
 
-                for (auto &group_chat: this->group_keys) {
-                    this->cli_driver->print_info("name: " + group_chat.first + ":");
-                    for (auto &member: group_chat.second) {
-                        this->cli_driver->print_info(member.first);
-                    }
-                    this->cli_driver->print_info(""); // blank line
-                }
+//                for (auto &group_chat: this->group_keys) {
+//                    this->cli_driver->print_info("name: " + group_chat.first + ":");
+//                    for (auto &member: group_chat.second) {
+//                        this->cli_driver->print_info(member.first);
+//                    }
+//                    this->cli_driver->print_info(""); // blank line
+//                } // todo: rewrite info command
             }
         } else {
             this->cli_driver->print_info("invalid command \n commands: \n create <group name>"
@@ -443,22 +444,22 @@ void UserClient::SendThread(
         }
 
 
-        // TODO for reference: should delete most of this
-      UserToUser_Message_Message u2u_msg;
-      u2u_msg.msg = plaintext;
-
-      std::vector<unsigned char> msg_data =
-          this->crypto_driver->encrypt_and_tag(keys.first, keys.second,
-                                               &u2u_msg);
-      try {
-          std::unique_lock l(this->mtx);
-        this->network_driver->send(msg_data);
-      } catch (std::runtime_error &_) {
-        this->cli_driver->print_info(
-            "Other side is closed, closing connection");
-        this->network_driver->disconnect();
-        return;
-      }
+//        // TODO for reference: should delete most of this
+//      UserToUser_Message_Message u2u_msg;
+//      u2u_msg.msg = plaintext;
+//
+//      std::vector<unsigned char> msg_data =
+//          this->crypto_driver->encrypt_and_tag(keys.first, keys.second,
+//                                               &u2u_msg);
+//      try {
+//          std::unique_lock l(this->mtx);
+//        this->network_driver->send(msg_data);
+//      } catch (std::runtime_error &_) {
+//        this->cli_driver->print_info(
+//            "Other side is closed, closing connection");
+//        this->network_driver->disconnect();
+//        return;
+//      }
     }
     this->cli_driver->print_right(plaintext);
   }
