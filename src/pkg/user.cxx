@@ -138,6 +138,8 @@ void UserClient::GenerateGroupKeys(std::vector<CryptoPP::SecByteBlock> other_pub
     std::unique_lock<std::mutex> group_key_lock(this->mtx);
     for (int i = 0; i < group_members.size(); i++) {
         this->group_keys[group_id][group_members[i]] = this->GenerateUserToUserKeys(other_public_values[i], group_id);
+        cli_driver->print_info("Adding " + group_members[i] + "'s public value to group: " + group_id);
+        this->publicKeys[group_id][group_members[i]] = other_public_values[i];
     }
 }
 
@@ -560,15 +562,14 @@ std::pair<std::vector<unsigned char>, bool> UserClient::TrySenderGroupKeys(std::
 }
 
 void UserClient::HandleOldMembersInfoMessage(std::vector<unsigned char> message, std::string sender_id) {
+    cli_driver->print_info("Handling Old Members Info Message");
     auto [utuomim, ok] = this->TryUnclaimedKeys(message, sender_id);
     if (!ok) {
         throw std::runtime_error("Received a message that can't be decrypted");
     }
-    cli_driver->print_info("INSERTED?: " + std::to_string(this->group_keys["0"].contains(sender_id)));
     int length = std::stoi(utuomim.num_members);
     assert(length == utuomim.other_public_values.size());
     this->GenerateGroupKeys(utuomim.other_public_values, utuomim.group_members, utuomim.group_id);
-    cli_driver->print_info("INSERTED?: " + std::to_string(this->group_keys["0"].contains(sender_id)));
 }
 
 std::pair<UserToUser_Old_Members_Info_Message, bool> UserClient::TryUnclaimedKeys(std::vector<unsigned char> message,
@@ -593,6 +594,7 @@ std::pair<UserToUser_Old_Members_Info_Message, bool> UserClient::TryUnclaimedKey
             this->group_keys[utuomim.group_id].insert({sender_id, {aes_key, hmac_key}});
             assert((this->group_keys[utuomim.group_id][sender_id].first == aes_key) &&
             (this->group_keys[utuomim.group_id][sender_id].second == hmac_key));
+            this->publicKeys[utuomim.group_id][sender_id] = publicKey;
             cli_driver->print_info("ADDED: " + sender_id + " to group " + utuomim.group_id);
             return {utuomim, ok };
         }
