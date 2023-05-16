@@ -293,6 +293,7 @@ void UserClient::ReceiveThread(
       this->cli_driver->print_info("Received EOF; closing connection.");
       return;
     }
+    this->cli_driver->print_info("Received message");
     // Check if HMAC is valid.
     auto msg_data = this->crypto_driver->decrypt_and_verify(
         keys.first, keys.second, encrypted_msg_data);
@@ -311,6 +312,7 @@ void UserClient::ReceiveThread(
         this->group_keys[gid.group_id]; // put an entry in map
 
         this->ownKeys[gid.group_id] = this->crypto_driver->DH_initialize();
+        this->cli_driver->print_info("Received GID value of :" + gid.group_id);
         continue;
     }
 
@@ -325,23 +327,16 @@ void UserClient::ReceiveThread(
     switch(type) {
 
           case MessageType::UserToUser_Invite_Message:
-                // TODO- validate and respond with UserToUser_Invite_Response_Message
                 this->RespondToInvite(keys, command, sender);
                 break;
           case MessageType::UserToUser_Invite_Response_Message:
-              // TODO- respond with UserToUser_Old_Members_Info_Message
-              // and send UserToUser_New_Member_Info_Message to rest of group
-              // also calculate aes and hmac shared keys with new user and
-              // update group chats struct
               this->RespondToResponse(keys, command, sender);
               break;
           case MessageType::UserToUser_New_Member_Info_Message:
-              // TODO calculate shared keys and update map
               this->HandleNewMemberInfoMessage(command, sender);
               break;
           case MessageType::UserToUser_Old_Members_Info_Message:
               this->HandleOldMembersInfoMessage(command, sender);
-              // TODO calculate shared keys and update map
               break;
           case MessageType::UserToUser_Message_Message:
                 this->ReadMessage(command, sender);
@@ -477,10 +472,12 @@ void UserClient::RespondToResponse(std::pair<CryptoPP::SecByteBlock, CryptoPP::S
     }
 
     UserToUser_Old_Members_Info_Message membersInfo;
-    membersInfo.num_members = group_members.size();
+    membersInfo.num_members = std::to_string(group_members.size());
     membersInfo.group_id = group;
     membersInfo.group_members = group_members;
     membersInfo.other_public_values = other_vals;
+
+    cli_driver->print_info("MEMBER COUNT :" + membersInfo.num_members);
 
     auto encrypted_other = this->crypto_driver->encrypt_and_tag(
             AESKey, HMACKey, &membersInfo
@@ -529,6 +526,7 @@ void UserClient::RespondToResponse(std::pair<CryptoPP::SecByteBlock, CryptoPP::S
 }
 
 void UserClient::ReadMessage(std::vector<unsigned char> message, std::string sender_id) {
+    cli_driver->print_info("Reading text message from sender: " + sender_id);
     auto [payload, ok] = this->TrySenderGroupKeys(message, sender_id);
     if (!ok) {
         throw std::runtime_error("Received a message which we cannot decrypt");
@@ -540,9 +538,14 @@ void UserClient::ReadMessage(std::vector<unsigned char> message, std::string sen
 
 std::pair<std::vector<unsigned char>, bool> UserClient::TrySenderGroupKeys(std::vector<unsigned char> message, std::string sender_id) {
     std::unique_lock<std::mutex> key_lock(this->mtx);
-    for (auto &iter: this->group_keys) {
+    for (auto iter: this->group_keys) {
+        cli_driver->print_info("ITERATING THROUGH GROUPS");
+        cli_driver->print_info("Trying keys from sender :" + sender_id);
+        cli_driver->print_info(std::to_string(this->group_keys["0"].contains(sender_id)));
         auto key_pair = iter.second.find(sender_id);
+        cli_driver->print_info("Does group_key contain? " + std::to_string(iter.second.contains(sender_id)));
         if (key_pair != iter.second.end()) {
+            cli_driver->print_info("TRYING A KEY");
             auto [payload, ok] = this->crypto_driver->decrypt_and_verify(
                     key_pair->second.first,
                     key_pair->second.second,
@@ -561,10 +564,8 @@ void UserClient::HandleOldMembersInfoMessage(std::vector<unsigned char> message,
     if (!ok) {
         throw std::runtime_error("Received a message that can't be decrypted");
     }
-
     int length = std::stoi(utuomim.num_members);
     assert(length == utuomim.other_public_values.size());
-
     this->GenerateGroupKeys(utuomim.other_public_values, utuomim.group_members, utuomim.group_id);
 }
 
@@ -584,7 +585,10 @@ std::pair<UserToUser_Old_Members_Info_Message, bool> UserClient::TryUnclaimedKey
             this->unclaimed_keys.erase(iter);
             key_lock.unlock();
             std::unique_lock<std::mutex> group_keys_lock(this->mtx);
-            this->group_keys[utuomim.group_id][sender_id] = {aes_key, hmac_key};
+            this->group_keys[utuomim.group_id].insert({sender_id, {aes_key, hmac_key}});
+            assert((this->group_keys[utuomim.group_id][sender_id].first == aes_key) &&
+            (this->group_keys[utuomim.group_id][sender_id].second == hmac_key));
+            cli_driver->print_info("ADDED: " + sender_id + " to group " + utuomim.group_id);
             return {utuomim, ok };
         }
     }
@@ -597,6 +601,7 @@ void UserClient::HandleNewMemberInfoMessage(std::vector<unsigned char> message, 
     if (!ok) {
         throw std::runtime_error("Received a message which we cannot decrypt");
     }
+    cli_driver->print_info("Handling New Member Info Message");
     UserToUser_New_Member_Info_Message utunmim;
     utunmim.deserialize(payload);
     std::unique_lock<std::mutex> group_keys_lock(this->mtx);
@@ -638,7 +643,7 @@ void UserClient::SendThread(
             } else {
 
                 std::string message = std::accumulate(commands.begin() + 2, commands.end(), std::string(""));
-                this->SendMessage(keys, commands[0], message);
+                this->SendMessage(keys, commands[1], message);
             }
         } else if (commands[0] == "info") {
             if (commands.size() != 1) {
@@ -660,26 +665,7 @@ void UserClient::SendThread(
                                          "send <group name> <message>"
                                          "\n info");
         }
-
-
-//        // TODO for reference: should delete most of this
-//      UserToUser_Message_Message u2u_msg;
-//      u2u_msg.msg = plaintext;
-//
-//      std::vector<unsigned char> msg_data =
-//          this->crypto_driver->encrypt_and_tag(keys.first, keys.second,
-//                                               &u2u_msg);
-//      try {
-//          std::unique_lock l(this->mtx);
-//        this->network_driver->send(msg_data);
-//      } catch (std::runtime_error &_) {
-//        this->cli_driver->print_info(
-//            "Other side is closed, closing connection");
-//        this->network_driver->disconnect();
-//        return;
-//      }
     }
-    this->cli_driver->print_right(plaintext);
   }
   this->cli_driver->print_info("Received EOF from user; closing connection");
   this->network_driver->disconnect();
@@ -723,16 +709,17 @@ void UserClient::AddMember(std::pair<CryptoPP::SecByteBlock, CryptoPP::SecByteBl
     invite.user_signature =
             this->crypto_driver->DSA_sign(this->DSA_signing_key, publicKeyAndCert);
 
+    cli_driver->print_info("1");
+    std::vector<unsigned char> payload;
+    invite.serialize(payload);
+    userMsg.message = payload;
 
-    auto encrypted_invite = this->crypto_driver->encrypt_and_tag(
-                                                this->group_keys[group][member].first,
-                                                this->group_keys[group][member].second,
-                                                                 &invite);
-    userMsg.message = encrypted_invite;
-
+    cli_driver->print_info("1");
     auto encrypted_server_msg = this->crypto_driver->encrypt_and_tag(
             keys.first, keys.second, &userMsg
             );
+
+    cli_driver->print_info("1");
     this->network_driver->send(encrypted_server_msg);
 
 }
@@ -743,6 +730,8 @@ void UserClient::SendMessage(std::pair<CryptoPP::SecByteBlock, CryptoPP::SecByte
 
     std::unique_lock<std::mutex> l(this->network_mut);
     std::unique_lock<std::mutex> lk(this->mtx);
+
+    cli_driver->print_info("Sending message to group: " + group);
 
     if (!this->group_keys.count(group)) {
         this->cli_driver->print_warning("group does not exist");

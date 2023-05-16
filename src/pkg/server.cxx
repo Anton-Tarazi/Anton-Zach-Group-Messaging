@@ -450,14 +450,14 @@ void ServerClient::MessageReceiver(
         if (!ok) {
             throw std::runtime_error("server.cxx:439 error decrypting user message");
         }
+        cli_driver->print_info("Received a message from a client");
         UserToServer_Wrapper_Message utswm;
         ServerToUser_Wrapper_Message stuwm;
         ServerToUser_GID_Message stugid;
         int gid;
         std::vector<unsigned char> data;
-        std::unique_lock<std::mutex> lock(this->table_mutex);
-        lock.unlock();
 
+        std::unique_lock<std::mutex> lock(this->table_mutex, std::defer_lock);
         switch (payload[0]) {
             case (char) MessageType::UserToServer_Wrapper_Message:
                 utswm.deserialize(payload);
@@ -469,12 +469,15 @@ void ServerClient::MessageReceiver(
                 lock.lock();
                 this->forwarding_table[stuwm.receiver_id].push_back(data);
                 this->table_cv.notify_all();
+                this->cli_driver->print_info("unlocking within switch statement");
                 lock.unlock();
+                cli_driver->print_info("Forwarded message to senderThread");
                 break;
             case (char) MessageType::UserToServer_GID_Message:
                 gid = this->gid_counter.fetch_add(1);
                 stugid.group_id = std::to_string(gid);
                 network_driver->send(crypto_driver->encrypt_and_tag(aes_key, hmac_key, &stugid));
+                cli_driver->print_info("Got a GID request, returning" + stugid.group_id);
                 break;
             default:
                 cli_driver->print_warning("received unconfigured message type");
@@ -490,22 +493,25 @@ void ServerClient::MessageSender(std::shared_ptr<NetworkDriver> network_driver,
                                  std::shared_ptr<CryptoDriver> crypto_driver, std::string id,
                                  std::pair<CryptoPP::SecByteBlock, CryptoPP::SecByteBlock> keys) {
     auto [aes_key, hmac_key] = keys;
-    std::unique_lock<std::mutex> lock(this->table_mutex);
     ServerToUser_Wrapper_Message stuwm;
-
     // wait until message queue is not empty
     while (!this->shutdown) {
+        std::unique_lock<std::mutex> lock(this->table_mutex);
         while (this->forwarding_table[id].empty()) {
             this->table_cv.wait(lock);
         }
         // acquired lock. need to now empty the queue and send messages
+        this->cli_driver->print_info("Got a message to send");
 
         while (!this->forwarding_table[id].empty()) {
             std::vector<unsigned char> msg = this->forwarding_table[id].front();
             stuwm.deserialize(msg);
             this->forwarding_table[id].pop_front();
             network_driver->send(crypto_driver->encrypt_and_tag(aes_key, hmac_key, &stuwm));
+            this->cli_driver->print_info("sent message from senderThread server");
         }
+        cli_driver->print_info("unlocking lock");
         lock.unlock();
+        cli_driver->print_info("unlocked lock");
     }
 }
