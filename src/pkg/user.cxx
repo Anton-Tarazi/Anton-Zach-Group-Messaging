@@ -137,16 +137,18 @@ void UserClient::GenerateGroupKeys(std::vector<CryptoPP::SecByteBlock> other_pub
 
     std::unique_lock<std::mutex> group_key_lock(this->mtx);
     for (int i = 0; i < group_members.size(); i++) {
-        this->group_keys[group_id][group_members[i]] = this->GenerateUserToUserKeys(other_public_values[i]);
+        this->group_keys[group_id][group_members[i]] = this->GenerateUserToUserKeys(other_public_values[i], group_id);
     }
 }
 
 
-std::pair<CryptoPP::SecByteBlock , CryptoPP::SecByteBlock> UserClient::GenerateUserToUserKeys(CryptoPP::SecByteBlock other_public_value) {
-    auto [dh, privateKey, publicKey] =
-            this->crypto_driver->DH_initialize();
+std::pair<CryptoPP::SecByteBlock , CryptoPP::SecByteBlock> UserClient::GenerateUserToUserKeys(CryptoPP::SecByteBlock other_public_value, std::string group_id) {
+    cli_driver->print_info("HELLOOOOO");
+    auto [dh, privateKey, publicKey] = this->ownKeys[group_id];
+    cli_driver->print_info("got keys");
     SecByteBlock sharedKey = this->crypto_driver->DH_generate_shared_key(
             dh, privateKey, other_public_value);
+    cli_driver->print_info("created keys");
     SecByteBlock AESKey = this->crypto_driver->AES_generate_key(sharedKey);
     SecByteBlock HMACKey = this->crypto_driver->HMAC_generate_key(sharedKey);
     return {AESKey, HMACKey};
@@ -412,9 +414,7 @@ void UserClient::RespondToInvite(std::pair<CryptoPP::SecByteBlock , CryptoPP::Se
     SecByteBlock AESKey = this->crypto_driver->AES_generate_key(sharedKey);
     SecByteBlock HMACKey = this->crypto_driver->HMAC_generate_key(sharedKey);
 
-    this->unclaimed_keys.emplace_back(AESKey, HMACKey);
-
-
+    this->unclaimed_keys.push_back({{dh, privateKey, publicKey}, {AESKey, HMACKey}});
 }
 
 
@@ -500,7 +500,7 @@ void UserClient::RespondToResponse(std::pair<CryptoPP::SecByteBlock, CryptoPP::S
     // send new member info
     for (auto member: this->group_keys[group]) {
         if (member.first != this->id && member.first != sender) {
-            cli_driver->print_info("TAGGED");
+            cli_driver->print_info("TAGGED " + member.first);
             UserToUser_New_Member_Info_Message newInfo;
             newInfo.other_public_value = userResponse.public_value;
             newInfo.group_id = group;
@@ -520,12 +520,8 @@ void UserClient::RespondToResponse(std::pair<CryptoPP::SecByteBlock, CryptoPP::S
                     keys.first, keys.second, &server_message
                     );
             this->network_driver->send(encrypted_server_message);
-
         }
-
     }
-
-
 }
 
 void UserClient::ReadMessage(std::vector<unsigned char> message, std::string sender_id) {
@@ -580,7 +576,9 @@ std::pair<UserToUser_Old_Members_Info_Message, bool> UserClient::TryUnclaimedKey
     std::unique_lock<std::mutex> key_lock(this->unclaimed_mtx);
     UserToUser_Old_Members_Info_Message utuomim;
     for (auto iter = this->unclaimed_keys.begin(); iter != this->unclaimed_keys.end(); iter++) {
-        auto [aes_key, hmac_key] = *iter.base();
+        auto [dh_params, keypair] = *iter.base();
+        auto [aes_key, hmac_key] = keypair;
+        auto [dh, privateKey, publicKey] = dh_params;
         auto [payload, ok] = this->crypto_driver->decrypt_and_verify(
                 aes_key,
                 hmac_key,
@@ -591,6 +589,7 @@ std::pair<UserToUser_Old_Members_Info_Message, bool> UserClient::TryUnclaimedKey
             this->unclaimed_keys.erase(iter);
             key_lock.unlock();
             std::unique_lock<std::mutex> group_keys_lock(this->mtx);
+            this->ownKeys[utuomim.group_id] = dh_params;
             this->group_keys[utuomim.group_id].insert({sender_id, {aes_key, hmac_key}});
             assert((this->group_keys[utuomim.group_id][sender_id].first == aes_key) &&
             (this->group_keys[utuomim.group_id][sender_id].second == hmac_key));
@@ -603,6 +602,7 @@ std::pair<UserToUser_Old_Members_Info_Message, bool> UserClient::TryUnclaimedKey
 
 
 void UserClient::HandleNewMemberInfoMessage(std::vector<unsigned char> message, std::string sender_id) {
+    cli_driver->print_info("HANDLING NEW MEMBER INFO SENT BY: " + sender_id);
     auto [payload, ok] = this->TrySenderGroupKeys(message, sender_id);
     if (!ok) {
         throw std::runtime_error("Received a message which we cannot decrypt");
@@ -611,7 +611,7 @@ void UserClient::HandleNewMemberInfoMessage(std::vector<unsigned char> message, 
     UserToUser_New_Member_Info_Message utunmim;
     utunmim.deserialize(payload);
     std::unique_lock<std::mutex> group_keys_lock(this->mtx);
-    this->group_keys[utunmim.group_id][utunmim.group_member] = this->GenerateUserToUserKeys(utunmim.other_public_value);
+    this->group_keys[utunmim.group_id][utunmim.group_member] = this->GenerateUserToUserKeys(utunmim.other_public_value, utunmim.group_id);
     this->cli_driver->print_info("Added new user " + utunmim.group_member + " to group " + utunmim.group_id);
 }
 

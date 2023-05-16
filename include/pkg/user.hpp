@@ -55,7 +55,8 @@ private:
   std::mutex network_mut; // for network driver
 
   std::mutex unclaimed_mtx;
-  std::vector<std::pair<CryptoPP::SecByteBlock , CryptoPP::SecByteBlock>> unclaimed_keys;
+  std::vector<std::pair< std::tuple<CryptoPP::DH, CryptoPP::SecByteBlock, CryptoPP::SecByteBlock>,
+  std::pair<CryptoPP::SecByteBlock , CryptoPP::SecByteBlock>>> unclaimed_keys;
 
 
   void
@@ -82,7 +83,7 @@ private:
 
     void GenerateGroupKeys(std::vector<CryptoPP::SecByteBlock> other_public_values,
                                        std::vector<std::string> group_members, std::string group_id);
-    std::pair<CryptoPP::SecByteBlock , CryptoPP::SecByteBlock> GenerateUserToUserKeys(CryptoPP::SecByteBlock other_public_value);
+    std::pair<CryptoPP::SecByteBlock , CryptoPP::SecByteBlock> GenerateUserToUserKeys(CryptoPP::SecByteBlock other_public_value, std::string group_id);
 
 
     void RespondToInvite(std::pair<CryptoPP::SecByteBlock , CryptoPP::SecByteBlock> keys, std::vector<unsigned char> message, std::string sender);
