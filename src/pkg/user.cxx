@@ -135,12 +135,10 @@ void UserClient::GenerateGroupKeys(std::vector<CryptoPP::SecByteBlock> other_pub
                                   std::vector<std::string> group_members, std::string group_id) {
     std::map<std::string, std::pair<CryptoPP::SecByteBlock, CryptoPP::SecByteBlock>> group_map;
 
-    for (int i = 0; i < group_members.size(); i++) {
-        group_map[group_members[i]] = this->GenerateUserToUserKeys(other_public_values[i]);
-    }
-
     std::unique_lock<std::mutex> group_key_lock(this->mtx);
-    this->group_keys[group_id] = group_map;
+    for (int i = 0; i < group_members.size(); i++) {
+        this->group_keys[group_id][group_members[i]] = this->GenerateUserToUserKeys(other_public_values[i]);
+    }
 }
 
 
@@ -424,6 +422,7 @@ void UserClient::RespondToResponse(std::pair<CryptoPP::SecByteBlock, CryptoPP::S
                                    std::vector<unsigned char> message, std::string sender) {
     std::unique_lock<std::mutex> l(this->network_mut);
     std::unique_lock<std::mutex> key_lock(this->mtx);
+    cli_driver->print_info("Handling response from: " + sender);
 
     UserToUser_Invite_Response_Message userResponse;
     userResponse.deserialize(message);
@@ -448,7 +447,11 @@ void UserClient::RespondToResponse(std::pair<CryptoPP::SecByteBlock, CryptoPP::S
 
     std::string group = this->waiting_on[sender];
 
+    cli_driver->print_info("Group ID: " + group);
+
     auto ownKeys = this->ownKeys[group];
+
+    this->publicKeys[group][sender] = userResponse.public_value;
 
     // compute keys
     SecByteBlock sharedKey = this->crypto_driver->DH_generate_shared_key(
@@ -497,7 +500,7 @@ void UserClient::RespondToResponse(std::pair<CryptoPP::SecByteBlock, CryptoPP::S
     // send new member info
     for (auto member: this->group_keys[group]) {
         if (member.first != this->id && member.first != sender) {
-
+            cli_driver->print_info("TAGGED");
             UserToUser_New_Member_Info_Message newInfo;
             newInfo.other_public_value = userResponse.public_value;
             newInfo.group_id = group;
@@ -509,7 +512,7 @@ void UserClient::RespondToResponse(std::pair<CryptoPP::SecByteBlock, CryptoPP::S
 
             UserToServer_Wrapper_Message server_message;
             server_message.sender_id = this->id;
-            server_message.receiver_id = sender;
+            server_message.receiver_id = member.first;
             server_message.type = MessageType::UserToUser_New_Member_Info_Message;
             server_message.message = encrypted_new_info;
 
@@ -540,16 +543,17 @@ std::pair<std::vector<unsigned char>, bool> UserClient::TrySenderGroupKeys(std::
     std::unique_lock<std::mutex> key_lock(this->mtx);
     for (auto iter: this->group_keys) {
         cli_driver->print_info("ITERATING THROUGH GROUPS");
-        cli_driver->print_info("Trying keys from sender :" + sender_id);
+        cli_driver->print_info("Trying keys from group: ");
+        cli_driver->print_info("Trying keys from sender: " + sender_id);
         cli_driver->print_info(std::to_string(this->group_keys["0"].contains(sender_id)));
         auto key_pair = iter.second.find(sender_id);
         cli_driver->print_info("Does group_key contain? " + std::to_string(iter.second.contains(sender_id)));
         if (key_pair != iter.second.end()) {
             cli_driver->print_info("TRYING A KEY");
             auto [payload, ok] = this->crypto_driver->decrypt_and_verify(
-                    key_pair->second.first,
-                    key_pair->second.second,
-                    message);
+                     key_pair->second.first,
+                     key_pair->second.second,
+                     message);
             if (ok) {
                 return std::make_pair(payload, ok);
             }
@@ -564,9 +568,11 @@ void UserClient::HandleOldMembersInfoMessage(std::vector<unsigned char> message,
     if (!ok) {
         throw std::runtime_error("Received a message that can't be decrypted");
     }
+    cli_driver->print_info("INSERTED?: " + std::to_string(this->group_keys["0"].contains(sender_id)));
     int length = std::stoi(utuomim.num_members);
     assert(length == utuomim.other_public_values.size());
     this->GenerateGroupKeys(utuomim.other_public_values, utuomim.group_members, utuomim.group_id);
+    cli_driver->print_info("INSERTED?: " + std::to_string(this->group_keys["0"].contains(sender_id)));
 }
 
 std::pair<UserToUser_Old_Members_Info_Message, bool> UserClient::TryUnclaimedKeys(std::vector<unsigned char> message,

@@ -657,9 +657,7 @@ int UserToUser_Old_Members_Info_Message::deserialize(std::vector<unsigned char> 
     int n = 1;
     n += get_string(&this->num_members, data, n);
     n += get_string(&this->group_id, data, n);
-    std::cout << "Yo" + this->num_members + "Yo" << std::endl;
     int num = std::stoi(this->num_members);
-    std::cout << "Yo" << std::endl;
     for (int i = 0; i < num; ++i) {
         std::string group_member;
         n += get_string(&group_member, data, n);

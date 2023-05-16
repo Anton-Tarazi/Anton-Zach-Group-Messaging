@@ -167,7 +167,7 @@ std::string CryptoDriver::AES_decrypt(SecByteBlock key, SecByteBlock iv,
         std::cerr << e.what() << std::endl;
         std::cerr << "This function was likely called with an incorrect shared key."
                 << std::endl;
-        throw std::runtime_error("CryptoDriver AES decryption failed.");
+        return ciphertext;
     }
 }
 
