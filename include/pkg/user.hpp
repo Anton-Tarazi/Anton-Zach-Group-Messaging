@@ -44,7 +44,11 @@ private:
   // group messaging structs
   // map from group chat -> user -> aes, hmac keys
   std::map<std::string, std::map<std::string, std::pair<CryptoPP::SecByteBlock, CryptoPP::SecByteBlock>>> group_keys;
-  std::map<std::string, std::pair<CryptoPP::SecByteBlock, CryptoPP::SecByteBlock>> ownKeys;
+  std::map<std::string, std::map<std::string, CryptoPP::SecByteBlock>> publicKeys;
+
+  std::map<std::string, std::tuple<CryptoPP::DH, CryptoPP::SecByteBlock, CryptoPP::SecByteBlock>> ownKeys;
+  std::map<std::string, std::string> waiting_on;
+
 
   std::mutex mtx;
 
@@ -79,4 +83,9 @@ private:
     void GenerateGroupKeys(std::vector<CryptoPP::SecByteBlock> other_public_values,
                                        std::vector<std::string> group_members, std::string group_id);
     std::pair<CryptoPP::SecByteBlock , CryptoPP::SecByteBlock> GenerateUserToUserKeys(CryptoPP::SecByteBlock other_public_value);
+
+
+    void RespondToInvite(std::pair<CryptoPP::SecByteBlock , CryptoPP::SecByteBlock> keys, std::vector<unsigned char> message, std::string sender);
+
+    void RespondToResponse(std::pair<CryptoPP::SecByteBlock , CryptoPP::SecByteBlock> keys, std::vector<unsigned char> message, std::string sender);
 };

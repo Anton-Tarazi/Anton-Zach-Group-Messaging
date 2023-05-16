@@ -309,6 +309,8 @@ void UserClient::ReceiveThread(
         gid.deserialize(msg_data.first);
         std::scoped_lock<std::mutex> l(this->mtx);
         this->group_keys[gid.group_id]; // put an entry in map
+
+        this->ownKeys[gid.group_id] = this->crypto_driver->DH_initialize();
         continue;
     }
 
@@ -324,6 +326,7 @@ void UserClient::ReceiveThread(
 
           case MessageType::UserToUser_Invite_Message:
                 // TODO- validate and respond with UserToUser_Invite_Response_Message
+                this->RespondToInvite(keys, command, sender);
                 break;
           case MessageType::UserToUser_Invite_Response_Message:
               // TODO- respond with UserToUser_Old_Members_Info_Message
@@ -348,6 +351,182 @@ void UserClient::ReceiveThread(
   }
 }
 
+
+void UserClient::RespondToInvite(std::pair<CryptoPP::SecByteBlock , CryptoPP::SecByteBlock> keys, std::vector<unsigned char> message, std::string sender) {
+
+
+    std::unique_lock<std::mutex> l(this->network_mut);
+    std::unique_lock<std::mutex> key_lock(this->unclaimed_mtx);
+
+    UserToUser_Invite_Message userResponse;
+    userResponse.deserialize(message);
+
+    this->DSA_remote_verification_key = userResponse.certificate.verification_key;
+
+    // verify response
+    bool valid1 = this->crypto_driver->DSA_verify(
+            userResponse.certificate.verification_key,
+            concat_byteblock_and_cert(userResponse.public_value, userResponse.certificate),
+            userResponse.user_signature
+    );
+
+    bool valid2 = this->crypto_driver->DSA_verify(
+            this->DSA_server_verification_key,
+            concat_string_and_dsakey(userResponse.certificate.id, userResponse.certificate.verification_key),
+            userResponse.certificate.server_signature
+    );
+
+    if (!valid1 || !valid2)
+        throw std::runtime_error("failed to verify user response");
+
+    // generate own key pair
+
+    auto [dh, privateKey, publicKey] =
+            this->crypto_driver->DH_initialize();
+
+    // send public key
+    std::vector<unsigned char> publicKeyAndCert =
+            concat_byteblock_and_cert(publicKey, this->certificate);
+    std::string signature =
+            this->crypto_driver->DSA_sign(this->DSA_signing_key, publicKeyAndCert);
+    UserToUser_Invite_Response_Message userMsg;
+    userMsg.public_value = publicKey;
+    userMsg.certificate = this->certificate;
+    userMsg.user_signature = signature;
+
+    std::vector<unsigned char> msg;
+    userMsg.serialize(msg);
+
+    UserToServer_Wrapper_Message wrapper;
+    wrapper.sender_id = this->id;
+    wrapper.receiver_id = sender;
+    wrapper.type = MessageType::UserToUser_Invite_Response_Message;
+    wrapper.message = msg;
+
+    auto encrypted_msg = this->crypto_driver->encrypt_and_tag(
+            keys.first, keys.second, &wrapper
+            );
+
+    this->network_driver->send(encrypted_msg);
+
+
+    // compute keys
+    SecByteBlock sharedKey = this->crypto_driver->DH_generate_shared_key(
+            dh, privateKey, userResponse.public_value
+    );
+
+    SecByteBlock AESKey = this->crypto_driver->AES_generate_key(sharedKey);
+    SecByteBlock HMACKey = this->crypto_driver->HMAC_generate_key(sharedKey);
+
+    this->unclaimed_keys.emplace_back(AESKey, HMACKey);
+
+
+}
+
+
+void UserClient::RespondToResponse(std::pair<CryptoPP::SecByteBlock, CryptoPP::SecByteBlock> keys,
+                                   std::vector<unsigned char> message, std::string sender) {
+    std::unique_lock<std::mutex> l(this->network_mut);
+    std::unique_lock<std::mutex> key_lock(this->mtx);
+
+    UserToUser_Invite_Response_Message userResponse;
+    userResponse.deserialize(message);
+
+    this->DSA_remote_verification_key = userResponse.certificate.verification_key;
+
+    // verify response
+    bool valid1 = this->crypto_driver->DSA_verify(
+            userResponse.certificate.verification_key,
+            concat_byteblock_and_cert(userResponse.public_value, userResponse.certificate),
+            userResponse.user_signature
+    );
+
+    bool valid2 = this->crypto_driver->DSA_verify(
+            this->DSA_server_verification_key,
+            concat_string_and_dsakey(userResponse.certificate.id, userResponse.certificate.verification_key),
+            userResponse.certificate.server_signature
+    );
+
+    if (!valid1 || !valid2)
+        throw std::runtime_error("failed to verify user response");
+
+    std::string group = this->waiting_on[sender];
+
+    auto ownKeys = this->ownKeys[group];
+
+    // compute keys
+    SecByteBlock sharedKey = this->crypto_driver->DH_generate_shared_key(
+            std::get<0>(ownKeys), std::get<1>(ownKeys), userResponse.public_value
+    );
+
+    SecByteBlock AESKey = this->crypto_driver->AES_generate_key(sharedKey);
+    SecByteBlock HMACKey = this->crypto_driver->HMAC_generate_key(sharedKey);
+
+    this->group_keys[group][sender] = {AESKey, HMACKey};
+
+    // send old member info
+    std::vector<std::string> group_members;
+    std::vector<CryptoPP::SecByteBlock> other_vals;
+    for (auto member: this->publicKeys[group]) {
+        if (member.first != this->id && member.first != sender) {
+            group_members.push_back(member.first);
+            other_vals.push_back(member.second);
+
+        }
+    }
+
+    UserToUser_Old_Members_Info_Message membersInfo;
+    membersInfo.num_members = group_members.size();
+    membersInfo.group_id = group;
+    membersInfo.group_members = group_members;
+    membersInfo.other_public_values = other_vals;
+
+    auto encrypted_other = this->crypto_driver->encrypt_and_tag(
+            AESKey, HMACKey, &membersInfo
+            );
+
+    UserToServer_Wrapper_Message serverMsg;
+    serverMsg.sender_id = this->id;
+    serverMsg.receiver_id = sender;
+    serverMsg.type = MessageType::UserToUser_Old_Members_Info_Message;
+    serverMsg.message = encrypted_other;
+
+    auto encrypted_server = this->crypto_driver->encrypt_and_tag(
+            keys.first, keys.second, &serverMsg
+            );
+    this->network_driver->send(encrypted_server);
+
+    // send new member info
+    for (auto member: this->group_keys[group]) {
+        if (member.first != this->id && member.first != sender) {
+
+            UserToUser_New_Member_Info_Message newInfo;
+            newInfo.other_public_value = userResponse.public_value;
+            newInfo.group_id = group;
+            newInfo.group_member = sender;
+
+            auto encrypted_new_info = this->crypto_driver->encrypt_and_tag(
+                    member.second.first, member.second.second, &newInfo
+                    );
+
+            UserToServer_Wrapper_Message server_message;
+            server_message.sender_id = this->id;
+            server_message.receiver_id = sender;
+            server_message.type = MessageType::UserToUser_New_Member_Info_Message;
+            server_message.message = encrypted_new_info;
+
+            auto encrypted_server_message = this->crypto_driver->encrypt_and_tag(
+                    keys.first, keys.second, &server_message
+                    );
+            this->network_driver->send(encrypted_server_message);
+
+        }
+
+    }
+
+
+}
+
 void UserClient::ReadMessage(std::vector<unsigned char> message, std::string sender_id) {
     auto [payload, ok] = this->TrySenderGroupKeys(message, sender_id);
     if (!ok) {
@@ -360,9 +539,9 @@ void UserClient::ReadMessage(std::vector<unsigned char> message, std::string sen
 
 std::pair<std::vector<unsigned char>, bool> UserClient::TrySenderGroupKeys(std::vector<unsigned char> message, std::string sender_id) {
     std::unique_lock<std::mutex> key_lock(this->mtx);
-    for (auto iter = this->group_keys.begin(); iter != this->group_keys.end(); ++iter) {
-        auto key_pair = iter->second.find(sender_id);
-        if (key_pair != iter->second.end()) {
+    for (auto &iter: this->group_keys) {
+        auto key_pair = iter.second.find(sender_id);
+        if (key_pair != iter.second.end()) {
             auto [payload, ok] = this->crypto_driver->decrypt_and_verify(
                     key_pair->second.first,
                     key_pair->second.second,
@@ -385,7 +564,7 @@ void UserClient::HandleOldMembersInfoMessage(std::vector<unsigned char> message,
     int length = std::stoi(utuomim.num_members);
     assert(length == utuomim.other_public_values.size());
 
-    GenerateGroupKeys(utuomim.other_public_values, utuomim.group_members, utuomim.group_id);
+    this->GenerateGroupKeys(utuomim.other_public_values, utuomim.group_members, utuomim.group_id);
 }
 
 std::pair<UserToUser_Old_Members_Info_Message, bool> UserClient::TryUnclaimedKeys(std::vector<unsigned char> message,
@@ -527,13 +706,15 @@ void UserClient::AddMember(std::pair<CryptoPP::SecByteBlock, CryptoPP::SecByteBl
         return;
     }
 
+    waiting_on[member] = group;
+
     UserToServer_Wrapper_Message userMsg;
     userMsg.type = MessageType::UserToUser_Invite_Message;
     userMsg.sender_id = this->id;
     userMsg.receiver_id = member;
 
     UserToUser_Invite_Message invite;
-    invite.public_value = this->ownKeys[group].second;
+    invite.public_value = std::get<2>(this->ownKeys[group]);
     invite.certificate = this->certificate;
 
     std::vector<unsigned char> publicKeyAndCert =
