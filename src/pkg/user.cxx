@@ -333,6 +333,7 @@ void UserClient::ReceiveThread(
               // and send UserToUser_New_Member_Info_Message to rest of group
               // also calculate aes and hmac shared keys with new user and
               // update group chats struct
+              this->RespondToResponse(keys, command, sender);
               break;
           case MessageType::UserToUser_New_Member_Info_Message:
               // TODO calculate shared keys and update map
