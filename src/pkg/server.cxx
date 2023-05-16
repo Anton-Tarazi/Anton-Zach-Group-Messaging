@@ -454,8 +454,9 @@ void ServerClient::MessageReceiver(
         ServerToUser_Wrapper_Message stuwm;
         ServerToUser_GID_Message stugid;
         int gid;
-        std::unique_lock<std::mutex> lock(this->table_mutex);
         std::vector<unsigned char> data;
+        std::unique_lock<std::mutex> lock(this->table_mutex);
+        lock.unlock();
 
         switch (payload[0]) {
             case (char) MessageType::UserToServer_Wrapper_Message:
